@@ -279,13 +279,42 @@ function isValidDate(text) {
 }
 
 // Validates time: "2pm", "2:30 PM", "14:00", "11am", "2 pm", "2 baje" (voice-friendly)
-function isValidTime(text) {
+// function isValidTime(text) {
+//   const t = text.trim();
+//   return /^([01]?\d|2[0-3]):[0-5]\d(\s?(am|pm))?$/i.test(t) ||
+//     /^([01]?\d|2[0-3])\s?(am|pm)$/i.test(t) ||
+//     /^([01]?\d|2[0-3])\s(baje|o'clock|oclock)$/i.test(t);
+// }
+
+function isValidTime(text, dateStr = null) {
   const t = text.trim();
-  return /^([01]?\d|2[0-3]):[0-5]\d(\s?(am|pm))?$/i.test(t) ||
+
+  // First check format
+  const formatValid = /^([01]?\d|2[0-3]):[0-5]\d(\s?(am|pm))?$/i.test(t) ||
     /^([01]?\d|2[0-3])\s?(am|pm)$/i.test(t) ||
     /^([01]?\d|2[0-3])\s(baje|o'clock|oclock)$/i.test(t);
-}
 
+  if (!formatValid) return false;
+
+  // If no date provided, just validate format
+  if (!dateStr) return true;
+
+  // Check if time is in the past for today's date
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const normalizedDate = normalizeDateToISO(dateStr);
+
+  if (normalizedDate === todayISO) {
+    const time24 = parseTimeTo24h(t);
+    if (time24) {
+      const now = new Date();
+      const currentMins = now.getHours() * 60 + now.getMinutes();
+      const bookingMins = toMinutes(time24);
+      return bookingMins > currentMins;
+    }
+  }
+
+  return true;
+}
 // Parse user time input → "HH:MM" 24-hour string
 function parseTimeTo24h(text) {
   const t = text.trim();
@@ -589,7 +618,7 @@ function handleRescheduleFlow(userId, text, session, platform, tenantId) {
       ...session,
       state: 'RESCHEDULE_ASK_DATE',
       rescheduleBookingId: selected.id,
-      rescheduleBooking: selected
+      rescheduleBooking: selected,
     });
 
     return `Let's reschedule your ${selected.service}.\n\nWhat *date* would you prefer?\n\n_e.g. 30 March, April 5, tomorrow_`;
@@ -608,7 +637,7 @@ function handleRescheduleFlow(userId, text, session, platform, tenantId) {
       return "Please choose a future date (today or later).";
     }
 
-    setSession(userId, tenantId, { ...session, state: 'RESCHEDULE_ASK_TIME', newDate: normalizedDate });
+    setSession(userId, tenantId, { ...session, state: 'RESCHEDULE_ASK_TIME', newDate: normalizedDate, dateForTimeCheck: normalizedDate });
 
     const timing = getSalonTiming(normalizedDate, tenantId);
     let timeHint = "_e.g. 2:00 PM, 11am, 3:30 PM_";
@@ -621,7 +650,7 @@ function handleRescheduleFlow(userId, text, session, platform, tenantId) {
 
   if (session.state === 'RESCHEDULE_ASK_TIME') {
     const timeText = extractTime(text);
-    if (!isValidTime(timeText)) {
+    if (!isValidTime(timeText,session.dateForTimeCheck)) {
       return "Please enter a valid time (e.g., 2:00 PM, 11am, 14:00).";
     }
 
@@ -837,6 +866,7 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
     );
   }
 
+  let date_time_check ;
   // ── STEP 6: Got date → ask time ───────────────────────────────────────────
   if (session.state === 'ASK_DATE') {
     const dateText = extractDate(text);
@@ -855,14 +885,15 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
       return (plt === 'webchat' || plt === 'voice') ? msg : `⚠️ ${msg}`;
     }
 
-    setSession(userId, tenantId, { ...session, state: 'ASK_TIME', date: normalizedDate });
+    setSession(userId, tenantId, { ...session, state: 'ASK_TIME', date: normalizedDate , dateForTimeCheck: normalizedDate });
 
     const timing = getSalonTiming(normalizedDate, tenantId);
     let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
     if (timing) {
       timeHint = `🕐 Available: *${formatTime12h(timing.open_time)} – ${formatTime12h(timing.close_time)}*\n\n${timeHint}`;
     }
-
+    
+    date_time_check = normalizedDate;
     return (
       `📆 *${dateText}* — noted!\n\n` +
       `What *time* works for you?\n\n${timeHint}`
@@ -873,7 +904,7 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
   if (session.state === 'ASK_TIME') {
     const timeText = extractTime(text);
     console.log('[BOOKING FIELDS] ASK_TIME raw:', JSON.stringify(text), '→ extracted:', JSON.stringify(timeText));
-    if (!isValidTime(timeText)) {
+    if (!isValidTime(timeText, session.dateForTimeCheck)) {
       return (
         '⚠️ Please enter a valid *time*.\n\n' +
         '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_'
