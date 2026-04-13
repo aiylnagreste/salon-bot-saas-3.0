@@ -286,10 +286,9 @@ async function handleVoiceTool(name, args, tenantId) {
             }
 
             db.prepare(`
-            UPDATE ${tenantId}_bookings 
-            SET status = 'canceled', 
-                cancellation_reason = 'Customer canceled via voice call',
-                updated_at = datetime('now')
+            UPDATE ${tenantId}_bookings
+            SET status = 'canceled',
+                cancellation_reason = 'Customer canceled via voice call'
             WHERE id = ?
         `).run(booking.id);
 
@@ -644,20 +643,24 @@ BOOKING (when caller wants to book an appointment):
 
 CANCELLATION (when caller wants to cancel an appointment):
 1. Ask for the caller's phone number they used for booking.
-2. Call cancel_booking with the phone number.
-3. If the tool returns a successful cancellation message, confirm it to the caller:
+2. Call cancel_booking with ONLY the phone number (no confirm). The tool returns a list of upcoming bookings.
+3. Read the booking(s) to the caller and ask: "Shall I cancel this appointment?"
+4. Once the caller says yes/confirm/theek hai/okay, call cancel_booking AGAIN with phone + confirm="true" (and booking_index if they specified which one).
+5. Confirm to the caller:
    English: "Your appointment has been cancelled. We hope to see you another time!"
    Urdu: "Aap ki appointment cancel kar di gayi hai. Hum umeed karte hain ke aap phir aayenge!"
-4. If no bookings are found, tell the caller: "I couldn't find any upcoming bookings for that phone number."
+6. If no bookings are found, tell the caller: "I couldn't find any upcoming bookings for that phone number."
 
 RESCHEDULE (when caller wants to change appointment time/date):
 1. Ask for the caller's phone number they used for booking.
 2. Ask for the new date and new time they prefer.
-3. Call reschedule_booking with the phone number, new date, and new time.
-4. If successful, confirm the new details:
+3. Call reschedule_booking with phone + new_date + new_time (no confirm). The tool checks availability and returns READY_TO_RESCHEDULE with booking_id and staff_name.
+4. Read the new details to the caller and ask: "Shall I reschedule your appointment to [date] at [time]?"
+5. Once the caller confirms, call reschedule_booking AGAIN with phone + new_date + new_time + confirm="true" + booking_id (from step 3 response) + staff_name (from step 3 response).
+6. Confirm the new details:
    English: "Your appointment has been rescheduled to [date] at [time]."
    Urdu: "Aap ki appointment [date] ko [time] par tabdeel kar di gayi hai."
-5. If no bookings found or staff unavailable, explain the issue and offer alternatives
+7. If no bookings found or staff unavailable, explain the issue and offer alternatives
 
 
 PRICES / SERVICES / BRANCHES / DEALS:
@@ -715,24 +718,30 @@ GENERAL:
                                 },
                                 {
                                     name: 'cancel_booking',
-                                    description: 'Cancel an existing booking using phone number',
+                                    description: 'Cancel an existing booking. Call TWICE: first with only phone to list bookings, then with phone + confirm="true" (+ booking_index if multiple) after caller confirms verbally.',
                                     parameters: {
                                         type: 'object',
                                         properties: {
                                             phone: { type: 'string', description: 'Phone number used for booking' },
+                                            confirm: { type: 'string', description: 'Set to "true" only after caller has verbally confirmed cancellation' },
+                                            booking_index: { type: 'integer', description: 'Which booking to cancel (1-based). Use when multiple bookings found and caller specifies one.' },
                                         },
                                         required: ['phone'],
                                     },
                                 },
                                 {
                                     name: 'reschedule_booking',
-                                    description: 'Reschedule an existing booking',
+                                    description: 'Reschedule an existing booking. Step 1: call with phone + new_date + new_time (no confirm) to check availability — returns READY_TO_RESCHEDULE with booking_id. Step 2: call again with phone + new_date + new_time + confirm="true" + booking_id + staff_name to execute.',
                                     parameters: {
                                         type: 'object',
                                         properties: {
                                             phone: { type: 'string', description: 'Phone number used for booking' },
                                             new_date: { type: 'string', description: 'New appointment date' },
-                                            new_time: { type: 'string', description: 'New appointment time' },
+                                            new_time: { type: 'string', description: 'New appointment time in HH:MM 24-hour format' },
+                                            confirm: { type: 'string', description: 'Set to "true" only after caller has verbally confirmed the reschedule' },
+                                            booking_index: { type: 'integer', description: 'Which booking to reschedule (1-based). Use when multiple bookings found.' },
+                                            booking_id: { type: 'integer', description: 'The booking ID returned in the READY_TO_RESCHEDULE response from step 1' },
+                                            staff_name: { type: 'string', description: 'Staff name returned in the READY_TO_RESCHEDULE response from step 1' },
                                         },
                                         required: ['phone', 'new_date', 'new_time'],
                                     },
