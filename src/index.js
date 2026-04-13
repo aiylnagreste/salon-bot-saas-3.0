@@ -997,7 +997,7 @@ app.post("/salon-admin/api/bookings", requireTenantAuth, (req, res) => {
   if (timingErr) return res.status(400).json({ ok: false, error: timingErr });
 
   // Admin panel bookings are never customer requests — only bot bookings set staffRequested=1
-  const staffRequested = 0;
+  var staffRequested = 0;
 
   if (staff_id) {
     const availErr = checkStaffAvailability(staff_id, date.trim(), time.trim(), endTime, db, tenantId);
