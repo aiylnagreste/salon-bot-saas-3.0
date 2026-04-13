@@ -1,0 +1,425 @@
+const Database = require('better-sqlite3');
+const bcrypt = require('bcrypt');
+const path = require('path');
+const logger = require('../utils/logger');
+
+const SUPER_DB_PATH = process.env.SUPER_DB_PATH || path.join(__dirname, '../../super.db');
+let superDb = null;
+
+// Table templates for tenant creation
+const TENANT_TABLE_TEMPLATES = {
+    bookings: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_bookings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_name TEXT NOT NULL,
+            phone TEXT,
+            service TEXT,
+            branch TEXT,
+            date TEXT,
+            time TEXT,
+            endTime TEXT,
+            status TEXT NOT NULL DEFAULT 'confirmed',
+            source TEXT DEFAULT 'manual',
+            notes TEXT,
+            calendly_uri TEXT UNIQUE,
+            staff_id INTEGER REFERENCES {{TENANT}}_staff(id) ON DELETE SET NULL,
+            staff_name TEXT,
+            deposit_paid INTEGER DEFAULT 0,
+            deposit_amount INTEGER DEFAULT 0,
+            reminder_sent INTEGER DEFAULT 0,
+            cancellation_reason TEXT,
+            staffRequested INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    services: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_services (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            price TEXT NOT NULL,
+            description TEXT,
+            branch TEXT NOT NULL DEFAULT 'All Branches',
+            durationMinutes INTEGER DEFAULT 60,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    deals: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_deals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            active BOOLEAN NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    branches: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_branches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            number INTEGER UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT NOT NULL,
+            map_link TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    staff: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            role TEXT NOT NULL,
+            branch_id INTEGER REFERENCES {{TENANT}}_branches(id) ON DELETE SET NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            requestedCount INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    salon_timings: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_salon_timings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            day_type TEXT NOT NULL UNIQUE,
+            open_time TEXT NOT NULL,
+            close_time TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    staff_roles: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_staff_roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    staff_bookings: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_staff_bookings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staffId INTEGER NOT NULL REFERENCES {{TENANT}}_staff(id) ON DELETE CASCADE,
+            bookingId INTEGER NOT NULL REFERENCES {{TENANT}}_bookings(id) ON DELETE CASCADE,
+            branchId INTEGER REFERENCES {{TENANT}}_branches(id) ON DELETE SET NULL,
+            startTime TEXT NOT NULL,
+            endTime TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(staffId, bookingId)
+        )
+    `,
+    customer_metrics: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_customer_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT NOT NULL,
+            name TEXT,
+            email TEXT,
+            total_bookings INTEGER DEFAULT 0,
+            completed INTEGER DEFAULT 0,
+            no_shows INTEGER DEFAULT 0,
+            cancellations INTEGER DEFAULT 0,
+            reschedules INTEGER DEFAULT 0,
+            total_spent INTEGER DEFAULT 0,
+            preferred_branch TEXT,
+            preferred_staff TEXT,
+            loyalty_points INTEGER DEFAULT 0,
+            notes TEXT,
+            last_visit TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(phone)
+        )
+    `,
+    booking_audit: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_booking_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            booking_id INTEGER NOT NULL REFERENCES {{TENANT}}_bookings(id) ON DELETE CASCADE,
+            old_status TEXT,
+            new_status TEXT,
+            changed_by TEXT,
+            reason TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            changed_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    booking_reschedules: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_booking_reschedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_booking_id INTEGER NOT NULL REFERENCES {{TENANT}}_bookings(id),
+            new_booking_id INTEGER NOT NULL REFERENCES {{TENANT}}_bookings(id),
+            old_date TEXT,
+            old_time TEXT,
+            new_date TEXT,
+            new_time TEXT,
+            reason TEXT,
+            rescheduled_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    notification_logs: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_notification_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient TEXT NOT NULL,
+            type TEXT NOT NULL,
+            booking_id INTEGER REFERENCES {{TENANT}}_bookings(id),
+            status TEXT,
+            error TEXT,
+            sent_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    business_settings: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_business_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            description TEXT,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `,
+    app_settings: `
+        CREATE TABLE IF NOT EXISTS {{TENANT}}_app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `
+};
+
+function getSuperDb() {
+    if (!superDb) {
+        superDb = new Database(SUPER_DB_PATH);
+        superDb.pragma('journal_mode = WAL');
+        initSuperSchema();
+    }
+    return superDb;
+}
+
+function initSuperSchema() {
+    superDb.exec(`
+        CREATE TABLE IF NOT EXISTS salon_tenants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id TEXT UNIQUE NOT NULL,
+            owner_name TEXT NOT NULL,
+            salon_name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            phone TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            status TEXT DEFAULT 'active',
+            subscription_plan TEXT DEFAULT 'basic',
+            subscription_expires TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `);
+
+    superDb.exec(`
+        CREATE TABLE IF NOT EXISTS super_admin (
+            id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    `);
+
+    superDb.exec(`
+        CREATE TABLE IF NOT EXISTS tenant_settings (
+            tenant_id TEXT NOT NULL,
+            setting_key TEXT NOT NULL,
+            setting_value TEXT,
+            updated_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (tenant_id, setting_key)
+        )
+    `);
+
+    superDb.exec(`
+        CREATE TABLE IF NOT EXISTS super_admin_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_username TEXT,
+            action TEXT,
+            target_tenant TEXT,
+            details TEXT,
+            ip_address TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    `);
+}
+
+function generateTenantId() {
+    const db = getSuperDb();
+    const last = db.prepare("SELECT tenant_id FROM salon_tenants ORDER BY id DESC LIMIT 1").get();
+    if (!last) return 'SA_01';
+    const num = parseInt(last.tenant_id.split('_')[1]) + 1;
+    return `SA_${String(num).padStart(2, '0')}`;
+}
+
+async function createTenant(ownerName, salonName, email, phone, password) {
+    const db = getSuperDb();
+    const tenantId = generateTenantId();
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const insert = db.prepare(`
+        INSERT INTO salon_tenants (tenant_id, owner_name, salon_name, email, phone, password_hash)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(tenantId, ownerName, salonName, email, phone, passwordHash);
+
+    // Create tenant-specific tables in the main salon.db
+    await createTenantTables(tenantId);
+
+    // Seed default data for the tenant
+    await seedTenantData(tenantId, salonName);
+
+    return tenantId;
+}
+
+function createTenantTables(tenantId) {
+    const { getDb } = require('./database');
+    const db = getDb(); // This returns the main salon.db connection
+
+    const transaction = db.transaction(() => {
+        for (const [tableName, template] of Object.entries(TENANT_TABLE_TEMPLATES)) {
+            const sql = template.replace(/{{TENANT}}/g, tenantId);
+            db.exec(sql);
+        }
+    });
+
+    transaction();
+    logger.info(`[Tenant] Created tables for ${tenantId}`);
+}
+
+function seedTenantData(tenantId, salonName) {
+    const { getDb } = require('./database');
+    const db = getDb();
+
+    // Default deals
+    const insertDeal = db.prepare(`
+        INSERT INTO ${tenantId}_deals (title, description, active) VALUES (?, ?, ?)
+    `);
+
+    const deals = [
+        ['Weekend Special', 'Get 20% off all hair services every Saturday and Sunday!', 1],
+        ['New Client Offer', 'First visit? Enjoy a complimentary hair treatment with any service.', 1],
+    ];
+    for (const deal of deals) insertDeal.run(...deal);
+
+    // Default branch
+    db.prepare(`
+        INSERT INTO ${tenantId}_branches (number, name, address, map_link, phone)
+        VALUES (1, ?, '123 Main Street', 'https://maps.google.com', '+1234567890')
+    `).run(salonName);
+
+    // Default salon timings
+    db.prepare(`
+        INSERT INTO ${tenantId}_salon_timings (day_type, open_time, close_time) VALUES (?, ?, ?)
+    `).run('workday', '10:00', '21:00');
+    db.prepare(`
+        INSERT INTO ${tenantId}_salon_timings (day_type, open_time, close_time) VALUES (?, ?, ?)
+    `).run('weekend', '12:00', '22:00');
+
+    // Default staff roles
+    const roles = ['stylist', 'receptionist', 'manager', 'admin'];
+    const insertRole = db.prepare(`INSERT INTO ${tenantId}_staff_roles (name) VALUES (?)`);
+    for (const role of roles) insertRole.run(role);
+
+    // Default currency
+    db.prepare(`
+        INSERT INTO ${tenantId}_app_settings (key, value) VALUES ('currency', 'Rs.')
+    `).run();
+
+    // Default business settings
+    const settings = [
+        ['cancellation_hours', '24', 'Hours before appointment to cancel without fee'],
+        ['no_show_grace_minutes', '30', 'Minutes after appointment to mark as no-show'],
+        ['deposit_percentage', '0', 'Percentage deposit required for booking'],
+        ['reminder_hours', '24', 'Hours before to send reminder'],
+        ['max_reschedules', '2', 'Maximum times a booking can be rescheduled']
+    ];
+    const insertSetting = db.prepare(`
+        INSERT INTO ${tenantId}_business_settings (key, value, description) VALUES (?, ?, ?)
+    `);
+    for (const setting of settings) insertSetting.run(...setting);
+
+    logger.info(`[Tenant] Seeded default data for ${tenantId}`);
+}
+
+function authenticateTenant(email, password) {
+    const db = getSuperDb();
+    const tenant = db.prepare(`
+        SELECT * FROM salon_tenants WHERE email = ? AND status = 'active'
+    `).get(email);
+
+    if (!tenant) return null;
+
+    const valid = bcrypt.compareSync(password, tenant.password_hash);
+    return valid ? tenant : null;
+}
+
+function getTenantByEmail(email) {
+    const db = getSuperDb();
+    return db.prepare(`SELECT * FROM salon_tenants WHERE email = ?`).get(email);
+}
+
+function getTenantById(tenantId) {
+    const db = getSuperDb();
+    return db.prepare(`SELECT * FROM salon_tenants WHERE tenant_id = ?`).get(tenantId);
+}
+
+function getAllTenants() {
+    const db = getSuperDb();
+    return db.prepare(`SELECT id, tenant_id, owner_name, salon_name, email, phone, status, subscription_plan, subscription_expires, created_at FROM salon_tenants ORDER BY created_at DESC`).all();
+}
+
+function updateTenantStatus(tenantId, status) {
+    const db = getSuperDb();
+    db.prepare(`UPDATE salon_tenants SET status = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(status, tenantId);
+}
+
+function updateTenantPassword(tenantId, newPassword) {
+    const db = getSuperDb();
+    const hash = bcrypt.hashSync(newPassword, 10);
+    db.prepare(`UPDATE salon_tenants SET password_hash = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(hash, tenantId);
+}
+
+function updateSalonName(tenantId, newSalonName) {
+    const db = getSuperDb();
+    db.prepare(`UPDATE salon_tenants SET salon_name = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(newSalonName, tenantId);
+
+    // Also update tenant_settings for widget
+    const settingDb = getSuperDb();
+    settingDb.prepare(`
+        INSERT OR REPLACE INTO tenant_settings (tenant_id, setting_key, setting_value, updated_at)
+        VALUES (?, 'salon_name', ?, datetime('now'))
+    `).run(tenantId, newSalonName);
+}
+
+function getTenantSetting(tenantId, key) {
+    const db = getSuperDb();
+    const result = db.prepare(`SELECT setting_value FROM tenant_settings WHERE tenant_id = ? AND setting_key = ?`).get(tenantId, key);
+    return result ? result.setting_value : null;
+}
+
+function setTenantSetting(tenantId, key, value) {
+    const db = getSuperDb();
+    db.prepare(`
+        INSERT OR REPLACE INTO tenant_settings (tenant_id, setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?, datetime('now'))
+    `).run(tenantId, key, value);
+}
+
+module.exports = {
+    getSuperDb,
+    createTenant,
+    authenticateTenant,
+    getTenantByEmail,
+    getTenantById,
+    getAllTenants,
+    updateTenantStatus,
+    updateTenantPassword,
+    updateSalonName,
+    getTenantSetting,
+    setTenantSetting,
+    getTenantById,
+    updateSalonName
+};

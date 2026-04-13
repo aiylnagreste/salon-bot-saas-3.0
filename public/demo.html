@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Salon Widget Studio — Build, Paste & Test</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #f9f0f5 0%, #efe6fb 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      color: #2d1b2e;
+    }
+
+    .tester-card {
+      max-width: 880px;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(2px);
+      border-radius: 2rem;
+      box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.25);
+      padding: 2rem 1.8rem 2.2rem;
+      border: 1px solid rgba(255, 255, 255, 0.6);
+    }
+
+    .logo-icon { font-size: 48px; text-align: center; margin-bottom: 8px; }
+    h1 {
+      font-size: 1.85rem;
+      font-weight: 700;
+      background: linear-gradient(120deg, #8b4a6b, #b2688c);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      text-align: center;
+    }
+    .subhead {
+      text-align: center;
+      font-size: 0.9rem;
+      color: #7b5c6e;
+      margin-top: 8px;
+      margin-bottom: 24px;
+      border-bottom: 1px dashed #e2cbd9;
+      padding-bottom: 12px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid #f0dfe9;
+      padding-bottom: 8px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      padding: 10px 24px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #9b6e84;
+      cursor: pointer;
+      border-radius: 40px;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      background: #8b4a6b;
+      color: white;
+      box-shadow: 0 2px 8px rgba(139, 74, 107, 0.3);
+    }
+    .tab-btn:hover:not(.active) { background: #f3e5ef; color: #6b3d58; }
+    .tab-pane { display: none; animation: fadeIn 0.2s ease; }
+    .tab-pane.active-pane { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+    .input-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+    .input-group label { font-weight: 600; font-size: 0.85rem; color: #5c3a4a; display: flex; align-items: center; gap: 6px; }
+    .input-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .input-field input, .input-field textarea {
+      flex: 1;
+      padding: 12px 14px;
+      border: 2px solid #e2cbd9;
+      border-radius: 18px;
+      font-size: 0.95rem;
+      background: white;
+      outline: none;
+      font-family: inherit;
+    }
+    .input-field input:focus, .input-field textarea:focus { border-color: #b2688c; box-shadow: 0 0 0 3px rgba(178, 104, 140, 0.2); }
+    .input-field textarea {
+      font-family: 'SF Mono', monospace;
+      font-size: 0.8rem;
+      resize: vertical;
+      min-height: 130px;
+    }
+
+    .color-control-group {
+      background: #fefafc;
+      padding: 14px 16px;
+      border-radius: 28px;
+      border: 1px solid #f0dfe9;
+    }
+    .color-dual-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .color-preview-large {
+      width: 52px; height: 52px; border-radius: 30px; border: 3px solid white;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor: pointer;
+    }
+    .hex-input-wrapper {
+      flex: 2; min-width: 140px; display: flex; align-items: center; gap: 8px;
+      background: white; border: 2px solid #e2cbd9; border-radius: 60px; padding: 4px 8px 4px 16px;
+    }
+    .hex-input-wrapper:focus-within { border-color: #b2688c; }
+    .hex-input-wrapper span { font-family: monospace; font-weight: 600; color: #9b6e84; }
+    .hex-input-wrapper input {
+      border: none; padding: 10px 4px; font-family: monospace; background: transparent;
+      flex: 1; outline: none; font-size: 0.9rem;
+    }
+    .reset-color-btn {
+      background: #f3e5ef; border: none; border-radius: 40px; padding: 8px 16px;
+      font-size: 0.75rem; cursor: pointer; color: #6b3d58;
+    }
+    .reset-color-btn:hover { background: #e7d4e2; }
+
+    .load-btn {
+      width: 100%;
+      background: linear-gradient(95deg, #8b4a6b, #a56483);
+      border: none; padding: 14px 0; border-radius: 40px;
+      font-weight: 700; font-size: 1.05rem; color: white; cursor: pointer;
+      margin-top: 8px; margin-bottom: 12px;
+      box-shadow: 0 6px 14px rgba(139, 74, 107, 0.3);
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .load-btn:hover { transform: scale(0.98); background: linear-gradient(95deg, #743e5a, #935471); }
+
+    #status {
+      font-size: 0.85rem; padding: 8px 12px; border-radius: 60px; text-align: center;
+      background: #f9f2f6; margin-top: 12px; font-weight: 500;
+    }
+    #status.error { background: #ffe6ea; color: #bc3f2e; }
+    #status.success { background: #e2f3e4; color: #2a6b3c; }
+
+    .info-note {
+      font-size: 0.7rem; text-align: center; margin-top: 16px;
+      color: #a1748b; background: rgba(255,240,245,0.7); padding: 6px 12px; border-radius: 40px;
+    }
+
+    .generated-script {
+      margin-top: 20px;
+      background: #1e1a2f;
+      border-radius: 18px;
+      padding: 14px;
+      position: relative;
+    }
+    .generated-script pre {
+      color: #e2d6e8;
+      font-family: 'SF Mono', monospace;
+      font-size: 0.75rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin: 0;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      background: #5c3a4a;
+      border: none;
+      color: white;
+      font-size: 0.7rem;
+      padding: 4px 12px;
+      border-radius: 30px;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: #8b4a6b; }
+
+    @media (max-width: 600px) {
+      .tester-card { padding: 1.2rem; }
+      .color-dual-row { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="tester-card">
+  <div class="logo-icon">💅📋</div>
+  <h1>Salon Widget Studio</h1>
+  <div class="subhead">Build · Paste · Test — Any widget script in seconds</div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="builder">✨ Widget Builder</button>
+    <button class="tab-btn" data-tab="paste">📋 Paste Script</button>
+  </div>
+
+  <!-- BUILDER PANE -->
+  <div id="builderPane" class="tab-pane active-pane">
+    <form id="widgetLoaderForm">
+      <div class="input-group">
+        <label>🏷️ Tenant ID</label>
+        <div class="input-field">
+          <input type="text" id="tenantInput" placeholder="e.g., SA_01, BELLA_2" autocomplete="off" value="SA_01">
+        </div>
+      </div>
+      <div class="input-group">
+        <label>🧸 Widget name (optional)</label>
+        <div class="input-field">
+          <input type="text" id="widgetNameInput" placeholder="e.g., Glam Assistant, Lily" autocomplete="off">
+        </div>
+      </div>
+      <div class="input-group">
+        <label>🎨 Primary color <span style="font-weight:normal">(data-primary-color)</span></label>
+        <div class="color-control-group">
+          <div class="color-dual-row">
+            <div class="color-preview-large" id="previewSwatch" style="background-color: #8b4a6b;"></div>
+            <div class="hex-input-wrapper">
+              <span>#</span>
+              <input type="text" id="hexTextInput" placeholder="8B4A6B" value="8B4A6B" maxlength="6" autocomplete="off">
+            </div>
+            <button type="button" id="openColorPickerBtn" class="reset-color-btn">🎨 picker</button>
+            <button type="button" id="resetColorBtn" class="reset-color-btn">↺ reset</button>
+          </div>
+          <input type="color" id="hiddenColorPicker" value="#8b4a6b" style="position: absolute; opacity: 0; width: 0; height: 0;">
+        </div>
+      </div>
+      <button type="submit" class="load-btn">🚀 Load & Launch Widget</button>
+    </form>
+
+    <div class="generated-script" id="builderScriptContainer" style="display: none;">
+      <button class="copy-btn" id="copyBuilderScript">📋 Copy Script</button>
+      <pre id="builderScriptCode"></pre>
+    </div>
+  </div>
+
+  <!-- PASTE PANE -->
+  <div id="pastePane" class="tab-pane">
+    <div class="input-group">
+      <label>📄 Paste your widget script tag</label>
+      <div class="input-field">
+        <textarea id="pastedScriptInput" placeholder='&lt;script src="http://localhost:3000/widget/SA_02/widget.js" data-bot-name="Nabila Salon" data-primary-color="#8f7161"&gt;&lt;/script&gt;'></textarea>
+      </div>
+    </div>
+    <button id="injectPastedScriptBtn" class="load-btn">🔌 Inject Pasted Script</button>
+    <div class="info-note">
+      💡 Paste any complete <code>&lt;script&gt;</code> tag — it will be extracted, validated, and injected.
+    </div>
+  </div>
+
+  <div id="status">Ready — build a widget or paste an existing script</div>
+  <div class="info-note">⚡ The widget will auto-open after loading. Previous widget instances are cleaned up.</div>
+</div>
+
+<script>
+  // DOM Elements
+  const tenantInput = document.getElementById('tenantInput');
+  const widgetNameInput = document.getElementById('widgetNameInput');
+  const hexTextInput = document.getElementById('hexTextInput');
+  const previewSwatch = document.getElementById('previewSwatch');
+  const hiddenColorPicker = document.getElementById('hiddenColorPicker');
+  const openColorPickerBtn = document.getElementById('openColorPickerBtn');
+  const resetColorBtn = document.getElementById('resetColorBtn');
+  const builderForm = document.getElementById('widgetLoaderForm');
+  const builderScriptContainer = document.getElementById('builderScriptContainer');
+  const builderScriptCode = document.getElementById('builderScriptCode');
+  const copyBuilderBtn = document.getElementById('copyBuilderScript');
+  const pastedScriptInput = document.getElementById('pastedScriptInput');
+  const injectPastedBtn = document.getElementById('injectPastedScriptBtn');
+  const statusDiv = document.getElementById('status');
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const builderPane = document.getElementById('builderPane');
+  const pastePane = document.getElementById('pastePane');
+
+  let currentScript = null;
+
+  // ========== UTILITIES ==========
+  function destroyPreviousWidget() {
+    if (currentScript && currentScript.parentNode) {
+      currentScript.remove();
+      currentScript = null;
+    }
+    const existingWrap = document.getElementById('salonbot-wrap');
+    if (existingWrap) existingWrap.remove();
+    const widgetIframes = document.querySelectorAll('iframe[title*="Salon" i], iframe[src*="widget"]');
+    widgetIframes.forEach(iframe => iframe.remove());
+    const floatingWidgets = document.querySelectorAll('[data-salonbot-element]');
+    floatingWidgets.forEach(el => el.remove());
+  }
+
+  function autoOpenWidget() {
+    let attempts = 0;
+    function tryOpen() {
+      const toggleBtn = document.getElementById('salonbot-toggle');
+      if (toggleBtn) {
+        toggleBtn.click();
+        console.log('[Salon] Widget opened');
+      } else if (attempts < 25) {
+        attempts++;
+        setTimeout(tryOpen, 150);
+      }
+    }
+    tryOpen();
+  }
+
+  function setStatus(message, type = '') {
+    statusDiv.textContent = message;
+    statusDiv.className = type;
+    if (type === 'success') {
+      setTimeout(() => {
+        if (statusDiv.textContent === message) statusDiv.className = '';
+      }, 3500);
+    }
+  }
+
+  // ========== COLOR HELPERS ==========
+  function normalizeHex(rawValue) {
+    let cleaned = rawValue.trim().replace(/^#/, '');
+    if (!/^[0-9A-Fa-f]{3}$|^[0-9A-Fa-f]{6}$/.test(cleaned)) return null;
+    if (cleaned.length === 3) cleaned = cleaned.split('').map(ch => ch + ch).join('');
+    if (cleaned.length === 6) return `#${cleaned.toUpperCase()}`;
+    return null;
+  }
+
+  function setPrimaryColor(hexWithHash) {
+    if (!hexWithHash || !hexWithHash.startsWith('#')) return false;
+    if (/^#[0-9A-F]{6}$/.test(hexWithHash.toUpperCase())) {
+      previewSwatch.style.backgroundColor = hexWithHash;
+      hiddenColorPicker.value = hexWithHash;
+      hexTextInput.value = hexWithHash.slice(1);
+      return true;
+    }
+    return false;
+  }
+
+  function getCurrentColor() {
+    let raw = hexTextInput.value.trim();
+    let withHash = raw.startsWith('#') ? raw : `#${raw}`;
+    let valid = normalizeHex(withHash);
+    return valid || '#8b4a6b';
+  }
+
+  hexTextInput.addEventListener('input', () => {
+    let raw = hexTextInput.value.trim();
+    let withHash = raw.startsWith('#') ? raw : `#${raw}`;
+    let valid = normalizeHex(withHash);
+    if (valid) {
+      setPrimaryColor(valid);
+      updateBuilderScriptDisplay();
+    }
+  });
+
+  previewSwatch.addEventListener('click', () => hiddenColorPicker.click());
+  openColorPickerBtn.addEventListener('click', () => hiddenColorPicker.click());
+  hiddenColorPicker.addEventListener('input', (e) => {
+    setPrimaryColor(e.target.value);
+    updateBuilderScriptDisplay();
+    setStatus(`🎨 Color: ${e.target.value}`);
+  });
+  resetColorBtn.addEventListener('click', () => {
+    setPrimaryColor('#8b4a6b');
+    updateBuilderScriptDisplay();
+    setStatus('Color reset to #8B4A6B');
+  });
+
+  // ========== GENERATE SCRIPT HTML (Builder) ==========
+  function escapeHtmlAttr(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+      if (m === '&') return '&amp;';
+      if (m === '<') return '&lt;';
+      if (m === '>') return '&gt;';
+      return m;
+    });
+  }
+
+  function generateScriptHTML() {
+    const tenantId = tenantInput.value.trim();
+    if (!tenantId) return null;
+    const botName = widgetNameInput.value.trim();
+    const primaryColor = getCurrentColor();
+    let scriptHTML = `<script src="/widget/${encodeURIComponent(tenantId)}/widget.js"`;
+    if (botName) scriptHTML += ` data-bot-name="${escapeHtmlAttr(botName)}"`;
+    scriptHTML += ` data-primary-color="${primaryColor}"><\/script>`;
+    return scriptHTML;
+  }
+
+  function updateBuilderScriptDisplay() {
+    const scriptHTML = generateScriptHTML();
+    if (scriptHTML) {
+      builderScriptCode.textContent = scriptHTML;
+      builderScriptContainer.style.display = 'block';
+    } else {
+      builderScriptContainer.style.display = 'none';
+    }
+  }
+
+  tenantInput.addEventListener('input', updateBuilderScriptDisplay);
+  widgetNameInput.addEventListener('input', updateBuilderScriptDisplay);
+
+  copyBuilderBtn.addEventListener('click', async () => {
+    const scriptText = builderScriptCode.textContent;
+    if (scriptText) {
+      await navigator.clipboard.writeText(scriptText);
+      setStatus('✅ Script copied to clipboard!', 'success');
+    }
+  });
+
+  // ========== INJECT FROM BUILDER ==========
+  async function loadFromBuilder(e) {
+    e.preventDefault();
+    const tenantId = tenantInput.value.trim();
+    if (!tenantId) {
+      setStatus('❌ Please enter a Tenant ID.', 'error');
+      return;
+    }
+    const botName = widgetNameInput.value.trim();
+    const primaryColor = getCurrentColor();
+
+    destroyPreviousWidget();
+    setStatus(`🔄 Loading widget for "${tenantId}" with color ${primaryColor}...`);
+
+    const script = document.createElement('script');
+    script.src = `/widget/${encodeURIComponent(tenantId)}/widget.js`;
+    script.setAttribute('data-primary-color', primaryColor);
+    if (botName) script.setAttribute('data-bot-name', botName);
+
+    script.onload = () => {
+      setStatus(`✅ Widget loaded for tenant: ${tenantId} | color: ${primaryColor}`, 'success');
+      autoOpenWidget();
+    };
+    script.onerror = () => {
+      setStatus(`❌ Failed to load widget for "${tenantId}". Check endpoint.`, 'error');
+      if (script.parentNode) script.remove();
+      currentScript = null;
+    };
+    document.body.appendChild(script);
+    currentScript = script;
+  }
+
+  builderForm.addEventListener('submit', loadFromBuilder);
+
+  // ========== PASTE SCRIPT INJECTION ==========
+  function extractAndInjectFromPastedScript(pastedHtml) {
+    // Find script tag with attributes
+    const scriptTagRegex = /<script\b([^>]*)>([\s\S]*?)<\/script>/i;
+    const match = scriptTagRegex.exec(pastedHtml);
+    
+    let srcAttr = null;
+    let dataBotName = null;
+    let dataPrimaryColor = null;
+    let allAttributes = '';
+    
+    if (match) {
+      allAttributes = match[1];
+      const srcMatch = allAttributes.match(/src=["']([^"']+)["']/i);
+      if (srcMatch) srcAttr = srcMatch[1];
+      const botMatch = allAttributes.match(/data-bot-name=["']([^"']+)["']/i);
+      if (botMatch) dataBotName = botMatch[1];
+      const colorMatch = allAttributes.match(/data-primary-color=["']([^"']+)["']/i);
+      if (colorMatch) dataPrimaryColor = colorMatch[1];
+    } else {
+      // Try loose matching: just find src and data attributes
+      const srcRegex = /src=["']([^"']+)["']/i;
+      const srcLoose = srcRegex.exec(pastedHtml);
+      if (srcLoose) srcAttr = srcLoose[1];
+      const botLoose = pastedHtml.match(/data-bot-name=["']([^"']+)["']/i);
+      if (botLoose) dataBotName = botLoose[1];
+      const colorLoose = pastedHtml.match(/data-primary-color=["']([^"']+)["']/i);
+      if (colorLoose) dataPrimaryColor = colorLoose[1];
+    }
+    
+    if (!srcAttr) {
+      setStatus('❌ No valid script src found in pasted content.', 'error');
+      return false;
+    }
+    
+    destroyPreviousWidget();
+    setStatus(`🔄 Injecting script from: ${srcAttr}...`);
+    
+    const script = document.createElement('script');
+    script.src = srcAttr;
+    if (dataBotName) script.setAttribute('data-bot-name', dataBotName);
+    if (dataPrimaryColor) script.setAttribute('data-primary-color', dataPrimaryColor);
+    
+    script.onload = () => {
+      setStatus(`✅ Widget injected successfully from pasted script!`, 'success');
+      autoOpenWidget();
+    };
+    script.onerror = () => {
+      setStatus(`❌ Failed to load script from: ${srcAttr}`, 'error');
+      if (script.parentNode) script.remove();
+      currentScript = null;
+    };
+    document.body.appendChild(script);
+    currentScript = script;
+    return true;
+  }
+  
+  injectPastedBtn.addEventListener('click', () => {
+    const pastedContent = pastedScriptInput.value.trim();
+    if (!pastedContent) {
+      setStatus('📋 Please paste a script tag first.', 'error');
+      return;
+    }
+    extractAndInjectFromPastedScript(pastedContent);
+  });
+
+  // ========== TAB SWITCHING ==========
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabId = btn.getAttribute('data-tab');
+      tabBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      if (tabId === 'builder') {
+        builderPane.classList.add('active-pane');
+        pastePane.classList.remove('active-pane');
+        updateBuilderScriptDisplay();
+      } else {
+        builderPane.classList.remove('active-pane');
+        pastePane.classList.add('active-pane');
+      }
+      setStatus(`Switched to ${tabId === 'builder' ? 'Widget Builder' : 'Paste Script'} mode`);
+    });
+  });
+
+  // Initial setup
+  updateBuilderScriptDisplay();
+  destroyPreviousWidget();
+  
+  // Prefill example in paste mode
+  pastedScriptInput.value = `<script src="http://localhost:3000/widget/SA_02/widget.js" data-bot-name="Nabila Salon" data-primary-color="#8f7161"><\/script>`;
+</script>
+</body>
+</html>

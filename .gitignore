@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.db
+*.db-shm
+*.db-wal
+*.tsx
+.env.local
+salon-data.json
+

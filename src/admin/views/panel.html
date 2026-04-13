@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Salon Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/admin/panel.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════
+     SIDEBAR
+══════════════════════════════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <h1>💅 <span>Salon</span> Admin</h1>
+    <p>Management Portal</p>
+  </div>
+  <nav>
+    <div class="nav-section-label">Main</div>
+    <a class="active" onclick="showTab('dashboard',this)">
+        <span class="nav-ico">⊞</span> Dashboard
+    </a>
+    <a id="nav-bookings" onclick="toggleBookingsMenu(this)">
+        <span class="nav-ico">📅</span> Bookings
+        <span class="nav-chevron" id="bookings-chevron">›</span>
+    </a>
+    <div class="nav-submenu" id="bookings-submenu">
+        <!-- Submenu items will be dynamically added by buildBranchSubmenu() -->
+    </div>
+    <a onclick="showTab('clients',this)">
+        <span class="nav-ico">👥</span> Clients
+    </a>
+    <a onclick="showTab('staff',this)">
+        <span class="nav-ico">💼</span> Staff
+    </a>
+    <div class="nav-section-label">Catalogue</div>
+    <a onclick="showTab('packages',this)">
+        <span class="nav-ico">✨</span> Packages &amp; Prices
+    </a>
+    <a onclick="showTab('deals',this)">
+        <span class="nav-ico">🎁</span> Deals &amp; Offers
+    </a>
+    <div class="nav-section-label">System</div>
+    <a onclick="showTab('settings',this)">
+        <span class="nav-ico">⚙️</span> Settings
+    </a>
+</nav>
+  <div class="sidebar-footer">
+    <a href="/salon-admin/logout">
+      <span class="nav-ico">↩</span> Logout
+    </a>
+  </div>
+</aside>
+
+<!-- ══════════════════════════════════════
+     MAIN
+══════════════════════════════════════ -->
+<main class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <h2 id="page-title">Dashboard</h2>
+    </div>
+    <div class="topbar-right">
+      <span class="badge-live">Live</span>
+      <span class="ai-badge">🤖 AI Receptionist Active</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ══ DASHBOARD TAB ══ -->
+    <div class="tab-panel active" id="tab-dashboard">
+
+      <div class="dash-header">
+        <div class="dash-header-left">
+          <h2 id="dash-greeting">Good morning</h2>
+          <p id="dash-date">—</p>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Appointment</button>
+      </div>
+
+     
+      <!-- Stats and Pie Chart Row -->
+
+<div class="dashboard-pie-row">
+    <!-- Chart 1: Today's Bookings Distribution -->
+    <div class="dashboard-pie-card">
+        <div class="pie-header">
+            <span class="pie-title">📅 Today's Bookings</span>
+            <span class="pie-subtitle">Distribution by branch</span>
+        </div>
+        <div class="pie-chart-container">
+            <canvas id="dashboard-bookings-pie-chart" width="200" height="200"></canvas>
+        </div>
+        <div id="dashboard-bookings-empty" class="pie-empty" style="display:none">No bookings today</div>
+    </div>
+    
+    <!-- Chart 2: Revenue Distribution -->
+    <div class="dashboard-pie-card">
+        <div class="pie-header">
+            <span class="pie-title">💰 Total Revenue</span>
+            <span class="pie-subtitle">Distribution by branch (all time)</span>
+        </div>
+        <div class="pie-chart-container">
+            <canvas id="dashboard-revenue-pie-chart" width="200" height="200"></canvas>
+        </div>
+        <div id="dashboard-revenue-empty" class="pie-empty" style="display:none">No revenue data available</div>
+        
+        <!-- Revenue Numbers Display -->
+        <div class="revenue-numbers-container" id="revenue-numbers-container" style="display:none">
+            <div class="revenue-header">💰 Revenue by Branch</div>
+            <div class="revenue-list" id="revenue-list"></div>
+            <div class="revenue-total" id="revenue-total"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Cards Row -->
+<div class="stats-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;">
+  <div class="stat-card" style="background:var(--card,#fff);border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:6px;">
+    <span style="font-size:0.78rem;color:var(--sub,#888);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Today's Bookings</span>
+    <span id="s-today" style="font-size:2rem;font-weight:700;color:var(--ink,#1a1a2e)">—</span>
+  </div>
+  <div class="stat-card" style="background:var(--card,#fff);border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:6px;">
+    <span style="font-size:0.78rem;color:var(--sub,#888);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Total Bookings</span>
+    <span id="s-total" style="font-size:2rem;font-weight:700;color:var(--ink,#1a1a2e)">—</span>
+  </div>
+  <div class="stat-card" style="background:var(--card,#fff);border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:6px;">
+    <span style="font-size:0.78rem;color:var(--sub,#888);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Active Services</span>
+    <span id="s-services" style="font-size:2rem;font-weight:700;color:var(--ink,#1a1a2e)">—</span>
+  </div>
+  <div class="stat-card" style="background:var(--card,#fff);border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:6px;">
+    <span style="font-size:0.78rem;color:var(--sub,#888);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Total Clients</span>
+    <span id="s-clients" style="font-size:2rem;font-weight:700;color:var(--ink,#1a1a2e)">—</span>
+  </div>
+</div>
+
+
+      <!-- Today's bookings + upcoming -->
+      <div class="today-grid">
+
+        <!-- Today's full table -->
+        <div class="today-bookings-card">
+          <div class="card-header">
+            <h3>Today's Appointments</h3>
+            <div class="card-header-right">
+              <button class="btn btn-outline btn-sm" onclick="showTab('bookings',null)">View All</button>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Client</th><th>Service</th><th>Branch</th>
+                <th>Time</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="today-tbody">
+              <tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Upcoming sidebar -->
+        <div class="upcoming-card">
+          <div class="card-header">
+            <h3>Upcoming (7 days)</h3>
+          </div>
+          <div class="upcoming-list" id="upcoming-list">
+            <div style="padding:32px;text-align:center"><span class="spinner"></span></div>
+          </div>
+        </div>
+
+      </div>
+
+    </div><!-- /tab-dashboard -->
+
+    <!-- ══ BOOKINGS TAB ══ -->
+    <div class="tab-panel" id="tab-bookings">
+
+      <!-- Branch Title Bar -->
+      <div class="branch-tab-header">
+        <div>
+          <h3 id="branch-tab-title" class="branch-tab-name">All Branches</h3>
+          <span id="branch-tab-sub" class="branch-tab-sub">Showing all bookings</span>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openBookingModal()">+ New Appointment</button>
+      </div>
+
+<!-- CRM Analytics Card -->
+<div class="branch-crm-card">
+    <div class="branch-crm-header">
+        <span class="branch-crm-title">📊 Revenue & Service Analytics</span>
+        <div class="crm-timeframe-tabs">
+            <button class="ctab" onclick="setCrmTimeframe('day', this)">Today</button>
+            <button class="ctab active" onclick="setCrmTimeframe('week', this)">Week</button>
+            <button class="ctab" onclick="setCrmTimeframe('month', this)">Month</button>
+            <button class="ctab" onclick="setCrmTimeframe('year', this)">Year</button>
+        </div>
+    </div>
+    <div class="branch-crm-body">
+        <div class="crm-inline-row">
+            <!-- Stat tiles column -->
+            <div class="crm-stats-col">
+                <div class="crm-stat">
+                    <div class="crm-stat-label">Revenue</div>
+                    <div class="crm-stat-value" id="crm-revenue">—</div>
+                </div>
+                <div class="crm-stat">
+                    <div class="crm-stat-label">Bookings</div>
+                    <div class="crm-stat-value" id="crm-count">—</div>
+                </div>
+                <div class="crm-stat">
+                    <div class="crm-stat-label">Top Service</div>
+                    <div class="crm-stat-value crm-stat-sm" id="crm-top-service">—</div>
+                </div>
+                <div class="crm-stat">
+                    <div class="crm-stat-label">Top Revenue</div>
+                    <div class="crm-stat-value" id="crm-top-revenue">—</div>
+                </div>
+            </div>
+            
+            <!-- Most Booked Services - Scrollable Bar Chart -->
+            <div class="crm-chart-box">
+                <div class="crm-chart-label">📊 Most Booked Services</div>
+                <div class="crm-chart-scrollable">
+                    <canvas id="crm-services-bar"></canvas>
+                </div>
+                <div id="crm-no-services" class="crm-empty" style="display:none; text-align:center; padding:20px;">No data for this period</div>
+            </div>
+            
+            <!-- Revenue by Service - Pie Chart -->
+            <div class="crm-chart-box">
+                <div class="crm-chart-label">💰 Revenue by Service</div>
+                <div class="crm-pie-container">
+                    <canvas id="crm-revenue-pie"></canvas>
+                </div>
+                <div id="crm-no-revenue" class="crm-empty" style="display:none; text-align:center; padding:20px;">No revenue data for this period</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+      <!-- Bookings Table -->
+      <div class="filter-bar" style="margin-top:16px">
+        <input type="date" id="f-date" onchange="loadBookings()" />
+        <select id="f-status" onchange="loadBookings()">
+          <option value="">All Statuses</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <button class="btn btn-outline btn-sm"
+          onclick="document.getElementById('f-date').value='';
+                   document.getElementById('f-status').value='';
+                   loadBookings()">Clear</button>
+      </div>
+      <!-- Container: either a single table (branch selected) or per-branch sections (all) -->
+      <div id="bookings-container"></div>
+    </div><!-- /tab-bookings -->
+
+    <!-- ══ PACKAGES TAB ══ -->
+    <div class="tab-panel" id="tab-packages">
+      <div class="sec-header">
+        <h3>Services &amp; Pricing</h3>
+        <button class="btn btn-primary btn-sm" onclick="openServiceModal()">+ Add Service</button>
+      </div>
+      <select id="branch-filter" class="branch-select" onchange="renderServices()">
+        <option value="">All Branches</option>
+        <option value="All Branches">General</option>
+      </select>
+      <div class="pkg-grid" id="services-grid">
+        <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--sub)">
+          <span class="spinner"></span>
+        </div>
+      </div>
+    </div><!-- /tab-packages -->
+
+    <!-- ══ DEALS TAB ══ -->
+    <div class="tab-panel" id="tab-deals">
+      <div class="sec-header">
+        <h3>Deals &amp; Offers</h3>
+        <button class="btn btn-primary btn-sm" onclick="openDealModal()">+ Add Deal</button>
+      </div>
+      <div id="deals-list">
+        <div style="text-align:center;padding:40px;color:var(--sub)">
+          <span class="spinner"></span>
+        </div>
+      </div>
+    </div><!-- /tab-deals -->
+
+    <!-- ══ CLIENTS TAB ══ -->
+    <div class="tab-panel" id="tab-clients">
+      <div class="sec-header"><h3>Client Directory</h3></div>
+      <div class="card-box">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Phone</th><th>Bookings</th>
+              <th>Last Visit</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="clients-tbody">
+            <tr class="loading-row"><td colspan="5"><span class="spinner"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /tab-clients -->
+
+    <!-- ══ STAFF TAB ══ -->
+    <div class="tab-panel" id="tab-staff">
+      <div class="sec-header">
+        <h3>Staff Management & Availability</h3>
+      </div>
+      <div class="staff-filters">
+        <select id="staff-branch-filter" onchange="loadStaffDashboard()">
+          <option value="">All Branches</option>
+        </select>
+        <input type="date" id="staff-date-filter" onchange="loadStaffDashboard()" style="margin-left:12px;padding:8px;border:1px solid var(--border);border-radius:4px;font-size:14px">
+      </div>
+      <div id="staff-dashboard-container"></div>
+    </div><!-- /tab-staff -->
+
+    <!-- ══ SETTINGS TAB ══ -->
+    <div class="tab-panel" id="tab-settings">
+      <div class="settings-tabs">
+        <button class="stab active" onclick="showSettingsTab('general', this)">⚙️ General</button>
+        <button class="stab" onclick="showSettingsTab('branches', this)">🏪 Branches</button>
+        <button class="stab" onclick="showSettingsTab('staff', this)">👥 Staff</button>
+        <button class="stab" onclick="showSettingsTab('roles', this)">🏷️ Roles</button>
+        <button class="stab" onclick="showSettingsTab('timings', this)">🕐 Salon Hours</button>
+      </div>
+
+      <div class="stab-panel active" id="stab-general">
+        <div class="sec-header"><h3>General Settings</h3></div>
+        <div class="timings-card">
+          <div class="timings-section">
+            <h4>💱 Currency</h4>
+            <p style="color:var(--sub);font-size:0.82rem;margin-bottom:12px">Shown before all prices in the panel and bot replies.</p>
+            <div class="form-row" style="max-width:300px">
+              <label>Currency Symbol / Prefix</label>
+              <select id="gen-currency">
+                <option value="Rs.">Rs. — Pakistani Rupee</option>
+                <option value="AED">AED — UAE Dirham</option>
+                <option value="SAR">SAR — Saudi Riyal</option>
+                <option value="USD">USD — US Dollar</option>
+                <option value="GBP">GBP — British Pound</option>
+                <option value="EUR">EUR — Euro</option>
+                <option value="INR">INR — Indian Rupee</option>
+                <option value="custom">✏️ Custom…</option>
+              </select>
+            </div>
+            <div class="form-row" id="gen-currency-custom-row" style="max-width:300px;display:none">
+              <label>Custom Prefix</label>
+              <input type="text" id="gen-currency-custom" placeholder="e.g. RM or BDT" maxlength="10" />
+            </div>
+          </div>
+          <!-- Widget Settings Section -->
+<div class="card" style="margin-top: 20px;">
+    <div class="card-header">
+        <h3>📱 Widget Embed Code</h3>
+    </div>
+    <div class="card-body">
+        <p>Copy this code and paste it into your website's HTML, just before the closing &lt;/body&gt; tag:</p>
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0;">
+            <code id="widget-code" style="word-break: break-all;">
+                &lt;script src="${window.location.origin}/widget/${tenantId}/widget.js"&gt;&lt;/script&gt;
+            </code>
+        </div>
+        <button onclick="copyWidgetCode()" class="btn btn-primary">Copy Code</button>
+        
+        <h4 style="margin-top: 20px;">Preview</h4>
+        <div style="border: 1px solid #ddd; border-radius: 8px; padding: 20px; text-align: center;">
+            <p>Your widget will appear in the bottom right corner of your website.</p>
+            <button onclick="previewWidget()" class="btn btn-outline">Preview Widget</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyWidgetCode() {
+    const code = document.getElementById('widget-code').innerText;
+    navigator.clipboard.writeText(code);
+    alert('Widget code copied to clipboard!');
+}
+
+function previewWidget() {
+    // Load the widget temporarily
+    const script = document.createElement('script');
+    script.src = `${window.location.origin}/widget/${tenantId}/widget.js`;
+    document.body.appendChild(script);
+}
+</script>
+          <div class="timings-actions">
+            <button class="btn btn-primary" onclick="saveGeneral()">Save Settings</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stab-panel" id="stab-branches">
+        <div class="sec-header">
+          <h3>Branch Management</h3>
+          <button class="btn btn-primary btn-sm" onclick="openBranchModal()">+ Add Branch</button>
+        </div>
+        <div class="card-box">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Name</th><th>Address</th><th>Phone</th><th>Map Link</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="branches-tbody">
+              <tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stab-panel" id="stab-staff">
+        <div class="sec-header">
+          <h3>Staff Management</h3>
+          <button class="btn btn-primary btn-sm" onclick="openStaffModal()">+ Add Staff</button>
+        </div>
+        <div class="card-box">
+          <table>
+            <thead>
+              <tr><th>Name</th><th>Phone</th><th>Role</th><th>Branch</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="staff-tbody">
+              <tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stab-panel" id="stab-roles">
+        <div class="sec-header">
+          <h3>Staff Roles</h3>
+          <button class="btn btn-primary btn-sm" onclick="openRoleModal()">+ Add Role</button>
+        </div>
+        <div class="card-box">
+          <table>
+            <thead>
+              <tr><th>Role Name</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="roles-tbody">
+              <tr class="loading-row"><td colspan="2"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stab-panel" id="stab-timings">
+        <div class="sec-header"><h3>Salon Operating Hours</h3></div>
+        <div class="timings-card">
+          <div class="timings-section">
+            <h4>🗓️ Workdays (Mon – Fri)</h4>
+            <div class="form-2col">
+              <div class="form-row">
+                <label>Opens At</label>
+                <input type="time" id="tm-workday-open" />
+              </div>
+              <div class="form-row">
+                <label>Closes At</label>
+                <input type="time" id="tm-workday-close" />
+              </div>
+            </div>
+          </div>
+          <div class="timings-section">
+            <h4>🏖️ Weekends (Sat – Sun)</h4>
+            <div class="form-2col">
+              <div class="form-row">
+                <label>Opens At</label>
+                <input type="time" id="tm-weekend-open" />
+              </div>
+              <div class="form-row">
+                <label>Closes At</label>
+                <input type="time" id="tm-weekend-close" />
+              </div>
+            </div>
+          </div>
+          <div class="timings-actions">
+            <button class="btn btn-primary" onclick="saveTimings()">Save Hours</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tab-settings -->
+
+  </div><!-- /content -->
+</main>
+
+<!-- ══════════════════════════════════════
+     MODALS
+══════════════════════════════════════ -->
+<!-- Booking Modal -->
+<div class="modal-overlay" id="booking-modal">
+  <div class="modal">
+    <h3 id="bm-title">New Appointment</h3>
+    <input type="hidden" id="bm-id" />
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Client Name</label>
+        <input type="text" id="bm-name" placeholder="Jane Doe" />
+      </div>
+      <div class="form-row">
+        <label>Phone</label>
+        <input type="text" id="bm-phone" placeholder="+971…" />
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Service</label>
+      <select id="bm-service"></select>
+      <div id="bm-service-duration" style="margin-top:6px;color:var(--sub);font-size:0.85rem"></div>
+    </div>
+    <div class="form-row">
+      <label>Branch</label>
+      <select id="bm-branch"></select>
+    </div>
+    
+    <!-- NEW STATUS DROPDOWN - ADD THIS BLOCK -->
+    <div class="form-row">
+      <label>Status</label>
+      <select id="bm-status">
+        <option value="confirmed">✅ Confirmed</option>
+        <option value="completed">✓ Completed</option>
+        <option value="no_show">❌ No-Show</option>
+        <option value="canceled">✗ Canceled</option>
+      </select>
+    </div>
+    
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Date</label>
+        <input type="date" id="bm-date" />
+      </div>
+      <div class="form-row">
+        <label>Time</label>
+        <input type="time" id="bm-time" />
+        <div id="bm-time-error" class="field-error"></div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Preferred Staff <span style="color:var(--sub);font-size:0.78rem">(optional)</span></label>
+      <select id="bm-staff">
+        <option value="">— No preference —</option>
+      </select>
+      <div id="bm-staff-availability" style="margin-top:6px;color:var(--sub);font-size:0.85rem"></div>
+    </div>
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Duration</label>
+        <div id="bm-duration-display" style="padding:8px;background:var(--mist);border-radius:4px;font-size:0.9rem;color:var(--text)">—</div>
+      </div>
+      <div class="form-row">
+        <label>End Time</label>
+        <div id="bm-end-time" style="padding:8px;background:var(--mist);border-radius:4px;font-size:0.9rem;color:var(--text);font-weight:500">—</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Notes</label>
+      <textarea id="bm-notes" placeholder="Any special requests…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('booking-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBooking()">Save Appointment</button>
+    </div>
+  </div>
+</div>
+<!-- Service Modal -->
+<div class="modal-overlay" id="service-modal">
+  <div class="modal">
+    <h3 id="sm-title">Add Service</h3>
+    <input type="hidden" id="sm-id" />
+    <div class="form-row">
+      <label>Service Name</label>
+      <input type="text" id="sm-name" placeholder="e.g. Keratin Treatment" />
+    </div>
+    <div class="form-row">
+      <label>Description / Includes</label>
+      <textarea id="sm-desc" rows="4" placeholder="e.g. Hair Wash · Protein Treatment · Massage"></textarea>
+    </div>
+    <div class="form-row">
+      <label>Duration (how long it takes)</label>
+      <input type="text" id="sm-duration" placeholder="e.g. 1:30 or 90" />
+      <small style="color:#999;margin-top:4px;display:block">Format: H:MM or minutes (e.g. 1:30 for 1h 30m, or 90)</small>
+    </div>
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Price</label>
+        <input type="text" id="sm-price" placeholder="e.g. 2500" />
+      </div>
+      <div class="form-row">
+        <label>Branch</label>
+        <select id="sm-branch"></select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('service-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveService()">Save Service</button>
+    </div>
+  </div>
+</div>
+
+<!-- Deal Modal -->
+<div class="modal-overlay" id="deal-modal">
+  <div class="modal">
+    <h3 id="dm-title">Add Deal</h3>
+    <input type="hidden" id="dm-id" />
+    <div class="form-row">
+      <label>Title</label>
+      <input type="text" id="dm-title-input" placeholder="Weekend Special" />
+    </div>
+    <div class="form-row">
+      <label>Description</label>
+      <textarea id="dm-desc" placeholder="Describe the offer…"></textarea>
+    </div>
+    <div class="form-row">
+      <label>Status</label>
+      <select id="dm-active">
+        <option value="1">Active</option>
+        <option value="0">Inactive</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('deal-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDeal()">Save Deal</button>
+    </div>
+  </div>
+</div>
+
+<!-- Branch Modal -->
+<div class="modal-overlay" id="branch-modal">
+  <div class="modal">
+    <h3 id="brm-title">Add Branch</h3>
+    <div class="form-row">
+      <label>Branch Name</label>
+      <input type="text" id="brm-name" placeholder="e.g. City Center Branch" />
+    </div>
+    <div class="form-row">
+      <label>Address</label>
+      <textarea id="brm-address" placeholder="e.g. 123 Main Street, City Center, Dubai"></textarea>
+    </div>
+    <div class="form-row">
+      <label>Google Maps Link</label>
+      <input type="url" id="brm-maplink" placeholder="https://maps.google.com/…" />
+    </div>
+    <div class="form-row">
+      <label>Phone Number</label>
+      <input type="tel" id="brm-phone" placeholder="+971 50 000 0001" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('branch-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBranch()">Save Branch</button>
+    </div>
+  </div>
+</div>
+
+<!-- Staff Modal -->
+<div class="modal-overlay" id="staff-modal">
+  <div class="modal">
+    <h3 id="stm-title">Add Staff</h3>
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Full Name</label>
+        <input type="text" id="stm-name" placeholder="e.g. Sara Ahmed" />
+      </div>
+      <div class="form-row">
+        <label>Phone</label>
+        <input type="tel" id="stm-phone" placeholder="+971…" />
+      </div>
+    </div>
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Role</label>
+        <select id="stm-role"></select>
+      </div>
+      <div class="form-row">
+        <label>Status</label>
+        <select id="stm-status">
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Assigned Branch</label>
+      <select id="stm-branch">
+        <option value="">— None —</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('staff-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveStaff()">Save Staff</button>
+    </div>
+  </div>
+</div>
+
+<!-- Role Modal -->
+<div class="modal-overlay" id="role-modal">
+  <div class="modal" style="max-width:360px">
+    <h3>Add Role</h3>
+    <div class="form-row">
+      <label>Role Name</label>
+      <input type="text" id="role-name-input" placeholder="e.g. nail technician" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('role-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRole()">Add Role</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="/admin/panel.js"></script>
+</body>
+</html>

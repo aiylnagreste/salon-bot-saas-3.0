@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Super Admin Dashboard | Salon Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: #f4f7fc;
+            padding: 24px 16px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* header */
+        .header {
+            background: white;
+            padding: 20px 28px;
+            border-radius: 24px;
+            margin-bottom: 28px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.03), 0 2px 6px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            border: 1px solid #eef2f6;
+        }
+        
+        .header h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #1e2a5e, #2d3a6e);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            letter-spacing: -0.3px;
+        }
+        
+        .logout-btn {
+            background: #f1f3f5;
+            color: #c0392b;
+            padding: 10px 22px;
+            text-decoration: none;
+            border-radius: 40px;
+            font-weight: 500;
+            transition: all 0.2s;
+            border: 1px solid #ffe2df;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .logout-btn:hover {
+            background: #c0392b;
+            color: white;
+            border-color: #c0392b;
+        }
+        
+        /* stats grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 24px;
+            margin-bottom: 36px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 24px 20px;
+            border-radius: 28px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+            transition: transform 0.1s ease;
+            border: 1px solid #edf2f7;
+        }
+        
+        .stat-card .stat-label {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+            color: #5b6e8c;
+        }
+        
+        .stat-value {
+            font-size: 44px;
+            font-weight: 800;
+            color: #1e3a8a;
+            margin-top: 12px;
+            line-height: 1.2;
+        }
+        
+        /* card */
+        .card {
+            background: white;
+            border-radius: 28px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+            border: 1px solid #eef2f8;
+        }
+        
+        .card-header {
+            padding: 20px 28px;
+            border-bottom: 1px solid #eef2f8;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            background: #fefefe;
+        }
+        
+        .card-header h3 {
+            font-weight: 600;
+            font-size: 1.45rem;
+            color: #0b2b44;
+        }
+        
+        .btn-primary {
+            background: #1f3a6b;
+            color: white;
+            padding: 10px 24px;
+            border: none;
+            border-radius: 40px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn-primary:hover {
+            background: #0f2a52;
+            transform: translateY(-1px);
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        
+        th, td {
+            padding: 16px 16px;
+            text-align: left;
+            border-bottom: 1px solid #ecf3fa;
+        }
+        
+        th {
+            background: #fafcff;
+            font-weight: 600;
+            color: #2c4c7c;
+            font-size: 0.85rem;
+        }
+        
+        .status-badge {
+            padding: 5px 12px;
+            border-radius: 100px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-block;
+            text-transform: capitalize;
+        }
+        
+        .status-active {
+            background: #e0f2e9;
+            color: #1f6e43;
+        }
+        
+        .status-suspended {
+            background: #fee9e6;
+            color: #b3402f;
+        }
+        
+        .action-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 6px 14px;
+            border-radius: 30px;
+            transition: all 0.2s;
+        }
+        
+        .btn-suspend {
+            background: #fee2e2;
+            color: #b91c1c;
+        }
+        
+        .btn-activate {
+            background: #e0f2fe;
+            color: #0f5c3b;
+        }
+        
+        .action-btn:hover {
+            opacity: 0.8;
+            transform: scale(0.97);
+        }
+        
+        /* modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(3px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 36px;
+            width: 90%;
+            max-width: 520px;
+            padding: 28px 32px;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+            animation: fadeSlideUp 0.2s ease;
+        }
+        
+        @keyframes fadeSlideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .modal-content h3 {
+            font-size: 1.6rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            color: #0f2e4a;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #2c3e66;
+            font-size: 0.85rem;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            transition: 0.2s;
+            outline: none;
+        }
+        
+        .form-group input:focus {
+            border-color: #3b6cb0;
+            box-shadow: 0 0 0 3px rgba(59,108,176,0.1);
+        }
+        
+        .modal-footer {
+            display: flex;
+            gap: 12px;
+            margin-top: 28px;
+            justify-content: flex-end;
+        }
+        
+        .btn-secondary {
+            background: #f1f3f5;
+            border: none;
+            padding: 10px 22px;
+            border-radius: 40px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 28px;
+            right: 28px;
+            padding: 14px 24px;
+            background: #1f2a44;
+            color: white;
+            border-radius: 60px;
+            display: none;
+            z-index: 1100;
+            font-weight: 500;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+            max-width: 380px;
+            word-break: break-word;
+        }
+        
+        .toast.show {
+            display: block;
+            animation: fadeIn 0.2s;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(20px);}
+            to { opacity: 1; transform: translateX(0);}
+        }
+        
+        .inline-help {
+            font-size: 0.7rem;
+            color: #5f7d9c;
+            margin-top: 6px;
+        }
+        
+        @media (max-width: 680px) {
+            .container {
+                padding: 0;
+            }
+            th, td {
+                padding: 12px 8px;
+            }
+            .card-header {
+                padding: 16px;
+            }
+        }
+        
+        .empty-row {
+            text-align: center;
+            padding: 48px;
+            color: #6883a0;
+        }
+        
+        .info-note {
+            background: #eef2ff;
+            border-radius: 16px;
+            padding: 10px 16px;
+            margin-top: 16px;
+            font-size: 0.75rem;
+            color: #2c4f7c;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏢 Super Admin Portal</h1>
+            <a href="/super-admin/logout" class="logout-btn">🚪 Logout</a>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">📋 TOTAL SALONS</div>
+                <div class="stat-value" id="total-tenants">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">✅ ACTIVE SALONS</div>
+                <div class="stat-value" id="active-tenants">0</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h3>🏪 Managed Salons (Multi-tenant)</h3>
+                <button class="btn-primary" onclick="openCreateTenantModal()">+ New Salon</button>
+            </div>
+            <div style="overflow-x: auto;">
+                <table id="tenants-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Salon Name</th>
+                            <th>Owner</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tenants-tbody">
+                        <tr><td colspan="7" style="text-align:center; padding: 48px;">⏳ Loading salons...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="info-note">
+                ⚡ Note: Creating a salon here does NOT auto-create any branch or default salon-admin staff. 
+                The salon admin (owner) will configure branches & staff from their own dashboard.
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Salon Modal (NO default branch, NO default staff) -->
+    <div id="create-tenant-modal" class="modal">
+        <div class="modal-content">
+            <h3>✨ Register New Salon</h3>
+            <div class="form-group">
+                <label>🏷️ Salon Name *</label>
+                <input type="text" id="salon-name" placeholder="e.g., Royal Glam Studio" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>👤 Owner Full Name *</label>
+                <input type="text" id="owner-name" placeholder="Full name of salon admin">
+            </div>
+            <div class="form-group">
+                <label>📧 Admin Email *</label>
+                <input type="email" id="email" placeholder="salon@example.com">
+            </div>
+            <div class="form-group">
+                <label>📞 Phone Number *</label>
+                <input type="tel" id="phone" placeholder="+1 234 567 8900">
+            </div>
+            <div class="form-group">
+                <label>🔑 Password</label>
+                <input type="password" id="password" placeholder="Leave blank → auto-generated">
+                <div class="inline-help">Auto-generated password will be shown in success toast.</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary" onclick="createTenant()">Create Salon</button>
+                <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="toast" class="toast"></div>
+    
+    <script>
+        // ---------- Helper: show toast notification ----------
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.style.background = type === 'error' ? '#c0392b' : '#1f3a6b';
+            toast.style.color = 'white';
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3800);
+        }
+        
+        // ---------- Load all salons (tenants) ----------
+        async function loadTenants() {
+            try {
+                const response = await fetch('/super-admin/api/tenants');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const tenants = await response.json();
+                const tbody = document.getElementById('tenants-tbody');
+                
+                if (!tenants || tenants.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="7" class="empty-row">✨ No salons registered yet. Click "New Salon" to start.</td></tr>`;
+                    document.getElementById('total-tenants').innerText = '0';
+                    document.getElementById('active-tenants').innerText = '0';
+                    return;
+                }
+                
+                let activeCount = 0;
+                const rowsHtml = tenants.map(tenant => {
+                    const tenantId = tenant.tenant_id || tenant.id;
+                    const status = tenant.status || 'active';
+                    if (status === 'active') activeCount++;
+                    
+                    const statusClass = status === 'active' ? 'status-active' : 'status-suspended';
+                    const actionBtnText = status === 'active' ? 'Suspend' : 'Activate';
+                    const actionBtnClass = status === 'active' ? 'btn-suspend' : 'btn-activate';
+                    
+                    return `
+                        <tr>
+                            <td><code>${escapeHtml(tenantId)}</code></td>
+                            <td><strong>${escapeHtml(tenant.salon_name || '—')}</strong></td>
+                            <td>${escapeHtml(tenant.owner_name || '—')}</td>
+                            <td>${escapeHtml(tenant.email || '—')}</td>
+                            <td>${escapeHtml(tenant.phone || '—')}</td>
+                            <td><span class="status-badge ${statusClass}">${status}</span></td>
+                            <td>
+                                <button class="action-btn ${actionBtnClass}" onclick="toggleStatus('${escapeHtml(tenantId)}', '${status}')">
+                                    ${actionBtnText}
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+                
+                tbody.innerHTML = rowsHtml;
+                document.getElementById('total-tenants').innerText = tenants.length;
+                document.getElementById('active-tenants').innerText = activeCount;
+            } catch (err) {
+                console.error('loadTenants error:', err);
+                document.getElementById('tenants-tbody').innerHTML = `<tr><td colspan="7" style="text-align:center; color:#b91c1c;">⚠️ Failed to load salons. Check network or backend.</td></tr>`;
+                showToast('Could not fetch salon list', 'error');
+            }
+        }
+        
+        // simple XSS protection
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
+                return c;
+            });
+        }
+        
+        // ---------- Modal controls ----------
+        function openCreateTenantModal() {
+            document.getElementById('create-tenant-modal').classList.add('active');
+            // clear previous values
+            document.getElementById('salon-name').value = '';
+            document.getElementById('owner-name').value = '';
+            document.getElementById('email').value = '';
+            document.getElementById('phone').value = '';
+            document.getElementById('password').value = '';
+        }
+        
+        function closeModal() {
+            document.getElementById('create-tenant-modal').classList.remove('active');
+        }
+        
+        // ---------- CREATE SALON: NO DEFAULT BRANCH, NO DEFAULT SALON-ADMIN STAFF ----------
+        // This sends ONLY tenant (salon) record. The backend must NOT auto-create any branch
+        // or assign any staff role apart from the owner authentication record.
+        // The salon admin will later use /salon-admin/dashboard or seed.js to create branches.
+        async function createTenant() {
+            const salonName = document.getElementById('salon-name').value.trim();
+            const ownerName = document.getElementById('owner-name').value.trim();
+            const email = document.getElementById('email').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            let password = document.getElementById('password').value;
+            
+            // validation
+            if (!salonName) {
+                showToast('Salon name is required', 'error');
+                return;
+            }
+            if (!ownerName) {
+                showToast('Owner name is required', 'error');
+                return;
+            }
+            if (!email) {
+                showToast('Email address is required', 'error');
+                return;
+            }
+            if (!phone) {
+                showToast('Phone number is required', 'error');
+                return;
+            }
+            
+            // if password empty -> generate secure readable pass (10 chars alnum)
+            let finalPassword = password;
+            let generatedFlag = false;
+            if (!finalPassword || finalPassword.trim() === '') {
+                finalPassword = generateRandomPassword(10);
+                generatedFlag = true;
+            }
+            
+            const payload = {
+                salon_name: salonName,
+                owner_name: ownerName,
+                email: email,
+                phone: phone,
+                password: finalPassword
+            };
+            
+            try {
+                const response = await fetch('/super-admin/api/tenants', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                let responseData;
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    responseData = await response.json();
+                } else {
+                    responseData = { error: 'Unexpected server response' };
+                }
+                
+                if (response.ok) {
+                    let successMsg = `✅ Salon "${salonName}" created successfully! `;
+                    if (generatedFlag) {
+                        successMsg += `🔑 Password: ${finalPassword}`;
+                    } else {
+                        successMsg += `Salon admin credentials have been set.`;
+                    }
+                    successMsg += ` No default branches or staff were created. The admin can add branches later.`;
+                    showToast(successMsg, 'success');
+                    closeModal();
+                    loadTenants();   // refresh list
+                    // clear form fields (including password)
+                    document.getElementById('salon-name').value = '';
+                    document.getElementById('owner-name').value = '';
+                    document.getElementById('email').value = '';
+                    document.getElementById('phone').value = '';
+                    document.getElementById('password').value = '';
+                } else {
+                    const errorMsg = responseData.error || responseData.message || 'Failed to create salon (backend error)';
+                    showToast(`❌ ${errorMsg}`, 'error');
+                }
+            } catch (err) {
+                console.error('create tenant error:', err);
+                showToast('Network error: could not create salon', 'error');
+            }
+        }
+        
+        // helper: generate readable random password (alphanumeric, no ambiguous chars)
+        function generateRandomPassword(length = 10) {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+            let pass = '';
+            for (let i = 0; i < length; i++) {
+                pass += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return pass;
+        }
+        
+        // ---------- Toggle status (suspend/activate) ----------
+        async function toggleStatus(tenantId, currentStatus) {
+            if (!tenantId) {
+                showToast('Invalid tenant identifier', 'error');
+                return;
+            }
+            const newStatus = currentStatus === 'active' ? 'suspended' : 'active';
+            
+            try {
+                const response = await fetch(`/super-admin/api/tenants/${encodeURIComponent(tenantId)}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: newStatus })
+                });
+                
+                if (response.ok) {
+                    showToast(`Salon ${newStatus === 'active' ? 'activated' : 'suspended'} successfully`, 'success');
+                    loadTenants();  // refresh the list
+                } else {
+                    let errorText = 'Failed to update status';
+                    try {
+                        const errData = await response.json();
+                        errorText = errData.error || errData.message || errorText;
+                    } catch(e) {}
+                    showToast(errorText, 'error');
+                }
+            } catch (err) {
+                console.error('toggleStatus error:', err);
+                showToast('Error updating status', 'error');
+            }
+        }
+        
+        // ---------- Manual override: ensure on window load we also clear any possible stale data ----------
+        window.addEventListener('DOMContentLoaded', () => {
+            loadTenants();
+            // Close modal when clicking outside
+            window.onclick = function(event) {
+                if (event.target.classList && event.target.classList.contains('modal')) {
+                    event.target.classList.remove('active');
+                }
+            };
+        });
+        
+        // additional safety: if there is any accidental default creation on frontend, we prevent by never sending branch flag.
+        // The backend must also respect that no branch or default staff is inserted during tenant creation.
+        // This frontend strictly sends only tenant core fields.
+    </script>
+</body>
+</html>
