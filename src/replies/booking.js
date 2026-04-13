@@ -851,47 +851,6 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
     return reply;
   }
 
-  // ── STEP 5b: Got staff → ask date ─────────────────────────────────────────
-  if (session.state === 'ASK_STAFF') {
-    const staffList = session.staffOptions || [];
-    let staffId = null;
-    let staffName = null;
-    let staffExplicitlyRequested = false;
-
-    const lower = text.toLowerCase();
-    if (lower === 'any' || lower === 'skip' || lower === 'no preference' || lower === 'none') {
-      // No preference — will pick random staff at ASK_TIME
-      staffExplicitlyRequested = false;
-    } else {
-      const num = parseInt(text, 10);
-      if (!isNaN(num) && num >= 1 && num <= staffList.length) {
-        staffId = staffList[num - 1].id;
-        staffName = staffList[num - 1].name;
-        staffExplicitlyRequested = true;
-      } else {
-        const match = staffList.find(s => s.name.toLowerCase().includes(lower));
-        if (match) {
-          staffId = match.id;
-          staffName = match.name;
-          staffExplicitlyRequested = true;
-        } else {
-          let reply = '⚠️ Please choose by *number*, type a *name*, or type *skip* for no preference.\n\n';
-          reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
-          return reply;
-        }
-      }
-    }
-
-    console.log('[BOOKING FIELDS] staff:', staffId, staffName, '(explicit:', staffExplicitlyRequested, ')');
-    setSession(userId, tenantId, { ...session, state: 'ASK_DATE', staffId, staffName, staffExplicitlyRequested });
-    const staffMsg = staffName ? `👤 *${staffName}* — great choice!\n\n` : '';
-    return (
-      staffMsg +
-      'What *date* would you like to come in?\n\n' +
-      '_e.g. 30 March · April 5 · tomorrow_'
-    );
-  }
-
   // ── STEP 6: Got date → ask time ───────────────────────────────────────────
   if (session.state === 'ASK_DATE') {
     const dateText = extractDate(text);
@@ -1047,6 +1006,47 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
       `🕐 *Time:* ${bookingData.time} – ${bookingData.endTime}\n\n` +
       '⏳ Our team will *confirm your appointment* shortly.\n' +
       'See you soon! 💅'
+    );
+  }
+
+  // ── STEP 5b: Got staff → ask date ─────────────────────────────────────────
+  if (session.state === 'ASK_STAFF') {
+    const staffList = session.staffOptions || [];
+    let staffId = null;
+    let staffName = null;
+    let staffExplicitlyRequested = false;
+
+    const lower = text.toLowerCase();
+    if (lower === 'any' || lower === 'skip' || lower === 'no preference' || lower === 'none') {
+      // No preference — will pick random staff at ASK_TIME
+      staffExplicitlyRequested = false;
+    } else {
+      const num = parseInt(text, 10);
+      if (!isNaN(num) && num >= 1 && num <= staffList.length) {
+        staffId = staffList[num - 1].id;
+        staffName = staffList[num - 1].name;
+        staffExplicitlyRequested = true;
+      } else {
+        const match = staffList.find(s => s.name.toLowerCase().includes(lower));
+        if (match) {
+          staffId = match.id;
+          staffName = match.name;
+          staffExplicitlyRequested = true;
+        } else {
+          let reply = '⚠️ Please choose by *number*, type a *name*, or type *skip* for no preference.\n\n';
+          reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
+          return reply;
+        }
+      }
+    }
+
+    console.log('[BOOKING FIELDS] staff:', staffId, staffName, '(explicit:', staffExplicitlyRequested, ')');
+    setSession(userId, tenantId, { ...session, state: 'ASK_DATE', staffId, staffName, staffExplicitlyRequested });
+    const staffMsg = staffName ? `👤 *${staffName}* — great choice!\n\n` : '';
+    return (
+      staffMsg +
+      'What *date* would you like to come in?\n\n' +
+      '_e.g. 30 March · April 5 · tomorrow_'
     );
   }
 
