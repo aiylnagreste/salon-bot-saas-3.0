@@ -17,29 +17,6 @@ function getServiceNames(tenantId) {
   }
 }
 
-function getActiveStaff(branchName, tenantId) {
-  try {
-    const db = getDb();
-    const branch = db.prepare(`SELECT id FROM ${tenantId}_branches WHERE name = ?`).get(branchName);
-    if (branch) {
-      return db.prepare(`
-        SELECT s.id, s.name, s.role FROM ${tenantId}_staff s
-        WHERE s.status = 'active'
-          AND (s.branch_id = ? OR s.branch_id IS NULL)
-          AND s.role NOT IN ('admin', 'manager', 'receptionist')
-        ORDER BY s.name
-      `).all(branch.id);
-    }
-    return db.prepare(`
-      SELECT id, name, role FROM ${tenantId}_staff
-      WHERE status = 'active'
-        AND role NOT IN ('admin', 'manager', 'receptionist')
-      ORDER BY name
-    `).all();
-  } catch {
-    return [];
-  }
-}
 
 function saveBooking(data, platform, tenantId) {
   const db = getDb();
@@ -181,13 +158,31 @@ function getAvailableStaff(branchName, date, startTimeHHMM, endTimeHHMM, tenantI
   }
 }
 
+
 /**
- * Pick a random available staff member
+ * Find next available time slots (up to maxSlots) after a given time on a given date
  */
-function pickRandomAvailableStaff(branchName, date, startTimeHHMM, endTimeHHMM, tenantId) {
-  const available = getAvailableStaff(branchName, date, startTimeHHMM, endTimeHHMM, tenantId);
-  if (available.length === 0) return null;
-  return available[Math.floor(Math.random() * available.length)];
+function getNextAvailableSlots(branchName, date, afterTime, durationMinutes, tenantId, maxSlots = 3) {
+  try {
+    const timing = getSalonTiming(date, tenantId);
+    if (!timing) return [];
+    const closeMin = toMinutes(timing.close_time);
+    // Start from next 30-min boundary after afterTime
+    let cur = Math.ceil((toMinutes(afterTime) + 1) / 30) * 30;
+    const results = [];
+    while (cur + durationMinutes <= closeMin && results.length < maxSlots) {
+      const h = Math.floor(cur / 60);
+      const m = cur % 60;
+      const slotTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      const slotEnd = calculateEndTime(slotTime, durationMinutes);
+      const available = getAvailableStaff(branchName, date, slotTime, slotEnd, tenantId);
+      if (available.length > 0) results.push(slotTime);
+      cur += 30;
+    }
+    return results;
+  } catch {
+    return [];
+  }
 }
 
 function branchList(tenantId) {
@@ -821,7 +816,7 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
     );
   }
 
-  // STEP 5: Got branch → ask staff
+  // STEP 5: Got branch → ask date (staff availability is checked after time is chosen)
   if (session.state === 'ASK_BRANCH') {
     const branches = getBranches(tenantId);
     const branchNum = parseInt(text, 10);
@@ -834,21 +829,12 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
         branchList(tenantId)
       );
     }
-    const staffList = getActiveStaff(branch.name, tenantId);
-    if (!staffList.length) {
-      setSession(userId, tenantId, { ...session, state: 'ASK_DATE', branch: branch.name, staffId: null, staffName: null });
-      return (
-        `📍 *${branch.name}* — perfect!\n\n` +
-        'What *date* would you like to come in?\n\n' +
-        '_e.g. 30 March · April 5 · tomorrow_'
-      );
-    }
-    setSession(userId, tenantId, { ...session, state: 'ASK_STAFF', branch: branch.name, staffOptions: staffList });
-    let reply = `📍 *${branch.name}* — perfect!\n\n`;
-    reply += 'Would you like to choose a specific *stylist/staff member*? (optional)\n\n';
-    reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
-    reply += '\n\n_Reply with a number to choose, or type *any* / *skip* for no preference._';
-    return reply;
+    setSession(userId, tenantId, { ...session, state: 'ASK_DATE', branch: branch.name });
+    return (
+      `📍 *${branch.name}* — perfect!\n\n` +
+      'What *date* would you like to come in?\n\n' +
+      '_e.g. 30 March · April 5 · tomorrow_'
+    );
   }
 
   // ── STEP 6: Got date → ask time ───────────────────────────────────────────
@@ -948,28 +934,83 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
     const serviceDuration = getServiceDuration(session.service, tenantId);
     const endTime24 = calculateEndTime(time24, serviceDuration);
 
-    // Check staff availability and handle random assignment
-    let staffId = session.staffId || null;
-    let staffName = session.staffName || null;
-    let staffExplicitlyRequested = session.staffExplicitlyRequested || false;
+    // Check staff availability — block if none free, otherwise show available staff
+    const availableStaff = getAvailableStaff(session.branch, session.date, time24, endTime24, tenantId);
 
-    if (staffId && session.staffExplicitlyRequested) {
-      // User explicitly chose a staff — validate availability
-      if (!checkStaffAvailability(staffId, session.date, time24, endTime24, tenantId)) {
-        return (
-          `⚠️ *${staffName}* is not available at *${formatTime12h(time24)}* on *${session.date}*.\n\n` +
-          'Please choose a different *time*, or type *any* / *skip* to choose another stylist.'
-        );
+    if (availableStaff.length === 0) {
+      const nextSlots = getNextAvailableSlots(session.branch, session.date, time24, serviceDuration, tenantId);
+      const plt = session.platform || 'whatsapp';
+      const timeFmt = formatTime12h(time24);
+
+      if (nextSlots.length > 0) {
+        const slotList = nextSlots.map(t => `*${formatTime12h(t)}*`).join(', ');
+        if (plt === 'instagram' || plt === 'facebook' || plt === 'webchat') {
+          return `No staff available at ${timeFmt} on ${session.date}. Next available times: ${nextSlots.map(formatTime12h).join(', ')}. Please choose another time.`;
+        }
+        return `⚠️ No staff available at *${timeFmt}* on *${session.date}*.\n\n🕐 *Next available slots:* ${slotList}\n\nPlease choose another time.`;
+      } else {
+        if (plt === 'instagram' || plt === 'facebook' || plt === 'webchat') {
+          return `No staff available on ${session.date} after ${timeFmt}. Please try a different date.`;
+        }
+        return `⚠️ No staff available on *${session.date}* after *${timeFmt}*.\n\nPlease try a *different date*.`;
       }
-    } else if (!staffId) {
-      // User did not choose staff — pick random available
-      const randomStaff = pickRandomAvailableStaff(session.branch, session.date, time24, endTime24, tenantId);
-      if (randomStaff) {
-        staffId = randomStaff.id;
-        staffName = randomStaff.name;
-        staffExplicitlyRequested = false; // don't increment requestedCount for random
+    }
+
+    // Staff available — save time/endTime and show staff list for selection
+    setSession(userId, tenantId, {
+      ...session,
+      state: 'ASK_STAFF_FROM_AVAILABLE',
+      time: time24,
+      endTime: endTime24,
+      availableStaff,
+    });
+
+    const plt = session.platform || 'whatsapp';
+    if (plt === 'instagram' || plt === 'facebook' || plt === 'webchat') {
+      const names = availableStaff.map((s, i) => `${i + 1}. ${s.name}`).join('\n');
+      return `Available staff at ${formatTime12h(time24)} on ${session.date}:\n\n${names}\n\nReply with a number to choose, or "any" for no preference.`;
+    }
+    const names = availableStaff.map((s, i) => `  *${i + 1}.* ${s.name}`).join('\n');
+    return (
+      `👥 *Available staff* at *${formatTime12h(time24)}* on *${session.date}*:\n\n${names}\n\n` +
+      '_Reply with a number to choose, or type *any* for no preference._'
+    );
+  }
+
+  // ── STEP 7b: Got staff choice → save booking ──────────────────────────────
+  if (session.state === 'ASK_STAFF_FROM_AVAILABLE') {
+    const staffList = session.availableStaff || [];
+    let staffId = null;
+    let staffName = null;
+    let staffExplicitlyRequested = false;
+
+    const lower = text.trim().toLowerCase();
+    if (lower === 'any' || lower === 'skip' || lower === 'no preference' || lower === 'koi bhi') {
+      // Auto-assign — pick random from available
+      const picked = staffList[Math.floor(Math.random() * staffList.length)];
+      staffId = picked.id;
+      staffName = picked.name;
+      staffExplicitlyRequested = false;
+    } else {
+      const num = parseInt(text, 10);
+      let match = null;
+      if (!isNaN(num) && num >= 1 && num <= staffList.length) {
+        match = staffList[num - 1];
+      } else {
+        match = staffList.find(s => s.name.toLowerCase().includes(lower));
       }
-      // If no available staff, continue anyway (show warning in confirmation)
+      if (!match) {
+        const plt = session.platform || 'whatsapp';
+        if (plt === 'instagram' || plt === 'facebook' || plt === 'webchat') {
+          const names = staffList.map((s, i) => `${i + 1}. ${s.name}`).join('\n');
+          return `Please choose by number or name:\n\n${names}\n\nOr reply "any" for no preference.`;
+        }
+        const names = staffList.map((s, i) => `  *${i + 1}.* ${s.name}`).join('\n');
+        return `⚠️ Please choose by *number* or *name*:\n\n${names}\n\n_Or type *any* for no preference._`;
+      }
+      staffId = match.id;
+      staffName = match.name;
+      staffExplicitlyRequested = true;
     }
 
     const bookingData = {
@@ -978,8 +1019,8 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
       service: session.service,
       branch: session.branch,
       date: session.date,
-      time: time24,
-      endTime: endTime24,
+      time: session.time,
+      endTime: session.endTime,
       staffId,
       staffName,
       staffExplicitlyRequested,
@@ -989,19 +1030,32 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
     try {
       saveBooking(bookingData, session.platform, tenantId);
     } catch (err) {
-      clearSession(userId, tenantId);;
+      clearSession(userId, tenantId);
       return 'Sorry, there was an error saving your booking. Please try again by typing *book*.';
     }
 
-    clearSession(userId, tenantId);;
+    clearSession(userId, tenantId);
 
+    const plt = session.platform || 'whatsapp';
+    if (plt === 'instagram' || plt === 'facebook' || plt === 'webchat') {
+      return (
+        `Booking confirmed!\n\n` +
+        `Name: ${bookingData.name}\n` +
+        `Service: ${bookingData.service}\n` +
+        `Branch: ${bookingData.branch}\n` +
+        `Staff: ${bookingData.staffName}\n` +
+        `Date: ${bookingData.date}\n` +
+        `Time: ${bookingData.time} – ${bookingData.endTime}\n\n` +
+        `Our team will confirm your appointment shortly. See you soon!`
+      );
+    }
     return (
       '✅ *Booking Received!*\n\n' +
       `👤 *Name:* ${bookingData.name}\n` +
       `📞 *Phone:* ${bookingData.phone}\n` +
       `✨ *Service:* ${bookingData.service}\n` +
       `📍 *Branch:* ${bookingData.branch}\n` +
-      (bookingData.staffName ? `💅 *Stylist:* ${bookingData.staffName}\n` : '') +
+      `💅 *Stylist:* ${bookingData.staffName}\n` +
       `📆 *Date:* ${bookingData.date}\n` +
       `🕐 *Time:* ${bookingData.time} – ${bookingData.endTime}\n\n` +
       '⏳ Our team will *confirm your appointment* shortly.\n' +

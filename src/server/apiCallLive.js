@@ -205,13 +205,72 @@ async function handleVoiceTool(name, args, tenantId) {
         // Calculate endTime based on service duration
         let endTime = null;
         const serviceDurationRow = db.prepare(`SELECT durationMinutes FROM ${tenantId}_services WHERE name = ?`).get(svcRow.name);
-        if (serviceDurationRow && serviceDurationRow.durationMinutes) {
-            const duration = serviceDurationRow.durationMinutes;
+        const svcDuration = serviceDurationRow ? serviceDurationRow.durationMinutes : 60;
+        {
             const [h, m] = time.trim().split(':').map(Number);
-            const totalMinutes = h * 60 + m + duration;
+            const totalMinutes = h * 60 + m + svcDuration;
             const newH = Math.floor(totalMinutes / 60) % 24;
             const newM = totalMinutes % 60;
             endTime = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+        }
+
+        // Check staff availability — block booking if no one is free at this time
+        {
+            const startFull = normalizedDate + ' ' + time.trim();
+            const endFull = normalizedDate + ' ' + endTime;
+            const allStaff = db.prepare(`
+                SELECT s.id, s.name FROM ${tenantId}_staff s
+                LEFT JOIN ${tenantId}_staff_roles r ON s.role_id = r.id
+                WHERE s.status = 'active' AND s.branch_id = ?
+                  AND (r.name IS NULL OR LOWER(r.name) NOT IN ('admin', 'manager', 'receptionist'))
+            `).all(brRow.id);
+
+            const freeStaff = allStaff.filter(s => {
+                const c = db.prepare(`
+                    SELECT COUNT(*) as cnt FROM ${tenantId}_staff_bookings
+                    WHERE staffId = ? AND status = 'active'
+                      AND startTime < ? AND endTime > ?
+                `).get(s.id, endFull, startFull);
+                return c.cnt === 0;
+            });
+
+            if (freeStaff.length === 0) {
+                // Find next available slots same day
+                const toM = t => { const [hh, mm] = t.split(':').map(Number); return hh * 60 + mm; };
+                const dayType = isWeekendForDate(normalizedDate) ? 'weekend' : 'workday';
+                const timingRow = db.prepare(`SELECT open_time, close_time FROM ${tenantId}_salon_timings WHERE day_type = ?`).get(dayType);
+                const hints = [];
+                if (timingRow && allStaff.length > 0) {
+                    const closeM = toM(timingRow.close_time);
+                    let cur = Math.ceil((toM(time.trim()) + 1) / 30) * 30;
+                    while (cur + svcDuration <= closeM && hints.length < 3) {
+                        const sh = Math.floor(cur / 60), sm = cur % 60;
+                        const slotT = `${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`;
+                        const eM2 = cur + svcDuration;
+                        const slotE = `${String(Math.floor(eM2/60)).padStart(2,'0')}:${String(eM2%60).padStart(2,'0')}`;
+                        const free = allStaff.filter(s => {
+                            const c = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_staff_bookings WHERE staffId = ? AND status = 'active' AND startTime < ? AND endTime > ?`).get(s.id, `${normalizedDate} ${slotE}`, `${normalizedDate} ${slotT}`);
+                            return c.cnt === 0;
+                        });
+                        if (free.length > 0) hints.push(slotT);
+                        cur += 30;
+                    }
+                }
+                if (hints.length > 0) return `NO_STAFF_AVAILABLE|${hints.join(',')}`;
+                return `NO_STAFF_AVAILABLE|No available slots today after ${time.trim()}.`;
+            }
+
+            // If specific staff requested, try to use them; otherwise pick first free
+            if (!staffId) {
+                const picked = freeStaff[Math.floor(Math.random() * freeStaff.length)];
+                staffId = picked.id;
+                staffNameSaved = picked.name;
+            } else if (!freeStaff.find(s => s.id === staffId)) {
+                // Requested staff is busy — pick any free staff instead
+                const picked = freeStaff[0];
+                staffId = picked.id;
+                staffNameSaved = picked.name;
+            }
         }
 
         const insertResult = db.prepare(`
@@ -531,6 +590,80 @@ async function handleVoiceTool(name, args, tenantId) {
         return 'Please confirm reschedule by saying YES.';
     }
 
+    if (name === 'check_availability') {
+        const { branch, date, time, service } = args;
+        if (!branch || !date || !time || !service) return 'Missing required fields: branch, date, time, service.';
+
+        const normalizedDate = normalizeDateToISO(date);
+
+        // Reject past times when booking for today
+        const todayISO = new Date().toISOString().slice(0, 10);
+        if (normalizedDate === todayISO) {
+            const now = new Date();
+            const nowMins = now.getHours() * 60 + now.getMinutes();
+            const [rh, rm] = time.split(':').map(Number);
+            if (rh * 60 + rm <= nowMins) {
+                const nowFmt = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                return `TIME_IN_PAST|Current time is ${nowFmt}. Please ask the caller to choose a later time.`;
+            }
+        }
+
+        const branchRow = db.prepare(`SELECT id, name FROM ${tenantId}_branches WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE '%' || LOWER(?) || '%'`).get(branch, branch);
+        if (!branchRow) return 'BRANCH_NOT_FOUND';
+
+        const svcRow2 = db.prepare(`SELECT durationMinutes FROM ${tenantId}_services WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE '%' || LOWER(?) || '%'`).get(service, service);
+        const dur = svcRow2 ? svcRow2.durationMinutes : 60;
+
+        const toM = t => { const [hh, mm] = t.split(':').map(Number); return hh * 60 + mm; };
+        const endM = toM(time) + dur;
+        const endTime2 = `${String(Math.floor(endM / 60) % 24).padStart(2, '0')}:${String(endM % 60).padStart(2, '0')}`;
+
+        const startFull = normalizedDate + ' ' + time;
+        const endFull = normalizedDate + ' ' + endTime2;
+
+        const allStaff = db.prepare(`
+            SELECT s.id, s.name FROM ${tenantId}_staff s
+            LEFT JOIN ${tenantId}_staff_roles r ON s.role_id = r.id
+            WHERE s.status = 'active' AND s.branch_id = ?
+              AND (r.name IS NULL OR LOWER(r.name) NOT IN ('admin', 'manager', 'receptionist'))
+        `).all(branchRow.id);
+
+        if (!allStaff.length) return 'NO_STAFF_AVAILABLE|No staff are assigned to this branch.';
+
+        const freeStaff = allStaff.filter(s => {
+            const c = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_staff_bookings WHERE staffId = ? AND status = 'active' AND startTime < ? AND endTime > ?`).get(s.id, endFull, startFull);
+            return c.cnt === 0;
+        });
+
+        if (freeStaff.length > 0) {
+            return `AVAILABLE|${freeStaff.map(s => s.name).join(',')}`;
+        }
+
+        // No staff free — find next available slots
+        const dayType = isWeekendForDate(normalizedDate) ? 'weekend' : 'workday';
+        const timingRow = db.prepare(`SELECT open_time, close_time FROM ${tenantId}_salon_timings WHERE day_type = ?`).get(dayType);
+        const hints = [];
+        if (timingRow) {
+            const closeMin = toM(timingRow.close_time);
+            let cur = Math.ceil((toM(time) + 1) / 30) * 30;
+            while (cur + dur <= closeMin && hints.length < 3) {
+                const sh = Math.floor(cur / 60), sm = cur % 60;
+                const sT = `${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`;
+                const eT2 = cur + dur;
+                const eT = `${String(Math.floor(eT2/60)).padStart(2,'0')}:${String(eT2%60).padStart(2,'0')}`;
+                const free = allStaff.filter(s => {
+                    const c = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_staff_bookings WHERE staffId = ? AND status = 'active' AND startTime < ? AND endTime > ?`).get(s.id, `${normalizedDate} ${eT}`, `${normalizedDate} ${sT}`);
+                    return c.cnt === 0;
+                });
+                if (free.length > 0) hints.push(sT);
+                cur += 30;
+            }
+        }
+
+        if (hints.length > 0) return `NO_STAFF_AVAILABLE|${hints.join(',')}`;
+        return `NO_STAFF_AVAILABLE|No available slots today after ${time}.`;
+    }
+
     return `Unknown tool: ${name}`;
 
 }
@@ -638,8 +771,13 @@ BOOKING (when caller wants to book an appointment):
    • date    — accept any natural date the caller gives ("kal", "Friday", "30 April") and YOU convert it internally. NEVER ask the caller to type a date in any specific format. Reject past dates — ask them to choose today or a future date.
    • time    — accept any natural time ("2 baje", "3 pm", "half past two") and YOU convert it to HH:MM internally. NEVER ask the caller to type a time in any specific format. Only accept future times — if the date is today and the time has already passed, ask them to choose a later time.
 3. Call get_timings to verify the requested time is within salon hours.
-4. Once ALL fields are collected, read them back to the caller and ask: "Shall I confirm this booking?"
-5. As soon as the caller says yes/confirm/theek hai/okay, call create_booking right away — do not ask again.
+4. Once you have service, branch, date, and time — call check_availability with those four values.
+   - If the result starts with TIME_IN_PAST: tell the caller that time has already passed and ask them to choose a later time today. Loop back to collect time again.
+   - If the result starts with NO_STAFF_AVAILABLE: tell the caller no staff are available at that time and mention the next available slots from the response. Ask them to choose a different time and loop back to collect time again.
+   - If the result starts with AVAILABLE: read the staff names (the comma-separated list after "AVAILABLE|") to the caller and ask if they have a preference. For example: "Available stylists are Sara and Ahmed. Would you like to choose one, or shall I assign automatically?"
+5. Once the caller names a staff preference (or says "any"/"no preference"), note their choice.
+6. Read all booking details back to the caller and ask: "Shall I confirm this booking?"
+7. As soon as the caller says yes/confirm/theek hai/okay, call create_booking right away — do not ask again.
 
 CANCELLATION (when caller wants to cancel an appointment):
 1. Ask for the caller's phone number they used for booking.
@@ -701,8 +839,22 @@ GENERAL:
                                     },
                                 },
                                 {
+                                    name: 'check_availability',
+                                    description: 'Check if any staff are free at a specific branch, date, and time for a given service. Call this BEFORE create_booking. Returns AVAILABLE|staff1,staff2 or NO_STAFF_AVAILABLE|slot1,slot2 (next available times).',
+                                    parameters: {
+                                        type: 'object',
+                                        properties: {
+                                            branch: { type: 'string', description: 'Exact branch name from get_branches' },
+                                            date: { type: 'string', description: 'Date in YYYY-MM-DD format' },
+                                            time: { type: 'string', description: 'Time in HH:MM 24-hour format' },
+                                            service: { type: 'string', description: 'Exact service name from get_services' },
+                                        },
+                                        required: ['branch', 'date', 'time', 'service'],
+                                    },
+                                },
+                                {
                                     name: 'create_booking',
-                                    description: 'Save the appointment to the database. Only call this after the caller has confirmed all details.',
+                                    description: 'Save the appointment to the database. Only call this after check_availability confirms staff are free AND the caller has confirmed all details.',
                                     parameters: {
                                         type: 'object',
                                         properties: {
