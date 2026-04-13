@@ -227,8 +227,313 @@ async function handleVoiceTool(name, args, tenantId) {
         if (staffNameSaved) confirm += ` with ${staffNameSaved}`;
         return confirm + '.';
     }
+    
+    if (name === 'cancel_booking') {
+        const { phone, confirm, booking_index } = args;
+
+        if (!phone) return 'Phone number is required to cancel a booking.';
+
+        const db = getDb();
+
+        // STEP 1: List bookings (when confirm is not provided)
+        if (!confirm) {
+            const bookings = db.prepare(`
+            SELECT id, date, time, service, branch 
+            FROM ${tenantId}_bookings 
+            WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
+            ORDER BY date, time
+        `).all(phone);
+
+            if (bookings.length === 0) {
+                return 'NO_BOOKINGS';
+            }
+
+            // Return list of bookings for Gemini to read to caller
+            const bookingList = bookings.map((b, i) =>
+                `${i + 1}. ${b.date} at ${b.time} — ${b.service} at ${b.branch}`
+            ).join(' | ');
+
+            return `FOUND_BOOKINGS|${bookings.length}|${bookingList}`;
+        }
+
+        // STEP 2: Execute cancellation (when caller confirms)
+        if (confirm === 'true') {
+            const bookings = db.prepare(`
+            SELECT id, date, time, service, branch 
+            FROM ${tenantId}_bookings 
+            WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
+            ORDER BY date, time
+        `).all(phone);
+
+            if (bookings.length === 0) {
+                return 'NO_BOOKINGS';
+            }
+
+            // Use booking_index if provided (1-based), otherwise default to first
+            const index = booking_index ? parseInt(booking_index, 10) - 1 : 0;
+            const booking = bookings[index] || bookings[0];
+
+            // Check cancellation policy
+            const settings = db.prepare(`SELECT value FROM ${tenantId}_business_settings WHERE key = 'cancellation_hours'`).get();
+            const cancellationHours = settings ? parseInt(settings.value) : 24;
+
+            const bookingDateTime = new Date(`${booking.date}T${booking.time}`);
+            const now = new Date();
+            const hoursUntil = (bookingDateTime - now) / (1000 * 60 * 60);
+
+            if (hoursUntil < cancellationHours) {
+                return `CANNOT_CANCEL|${cancellationHours}`;
+            }
+
+            db.prepare(`
+            UPDATE ${tenantId}_bookings 
+            SET status = 'canceled', 
+                cancellation_reason = 'Customer canceled via voice call',
+                updated_at = datetime('now')
+            WHERE id = ?
+        `).run(booking.id);
+
+            db.prepare(`UPDATE ${tenantId}_staff_bookings SET status = 'canceled' WHERE bookingId = ?`).run(booking.id);
+
+            // Update customer metrics
+            db.prepare(`
+            INSERT INTO ${tenantId}_customer_metrics (phone, total_bookings, cancellations)
+            VALUES (?, 1, 1)
+            ON CONFLICT(phone) DO UPDATE SET
+                cancellations = cancellations + 1,
+                updated_at = datetime('now')
+        `).run(phone);
+
+            // Update cache
+            const updatedBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(booking.id);
+            patchCache(tenantId, 'bookings', 'upsert', updatedBooking).catch(e => console.error('[cache] voice cancel:', e.message));
+
+            return `CANCELLED|${booking.date}|${booking.time}|${booking.service}`;
+        }
+
+        return 'Please confirm cancellation by saying YES.';
+    }
+
+    if (name === 'reschedule_booking') {
+        const { phone, new_date, new_time, confirm, booking_index } = args;
+
+        if (!phone) return 'Phone number is required to reschedule a booking.';
+
+        const db = getDb();
+
+        // STEP 1: List bookings (when new_date is not provided)
+        if (!new_date) {
+            const bookings = db.prepare(`
+            SELECT id, date, time, service, branch, staff_id, staff_name
+            FROM ${tenantId}_bookings 
+            WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
+            ORDER BY date, time
+        `).all(phone);
+
+            if (bookings.length === 0) {
+                return 'NO_BOOKINGS';
+            }
+
+            const bookingList = bookings.map((b, i) =>
+                `${i + 1}. ${b.date} at ${b.time} — ${b.service}`
+            ).join(' | ');
+
+            return `FOUND_BOOKINGS|${bookings.length}|${bookingList}`;
+        }
+
+        // Helper function for end time calculation
+        const calculateEndTime = (startTime, durationMin) => {
+            const [h, m] = startTime.split(':').map(Number);
+            const total = h * 60 + m + durationMin;
+            const newH = Math.floor(total / 60) % 24;
+            const newM = total % 60;
+            return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+        };
+
+        // Helper for staff availability
+        const getAvailableStaffForVoice = (branchName, date, startTime, endTime) => {
+            try {
+                const branch = db.prepare(`SELECT id FROM ${tenantId}_branches WHERE name = ?`).get(branchName);
+                if (!branch) return [];
+
+                const staff = db.prepare(`
+                SELECT s.id, s.name FROM ${tenantId}_staff s
+                WHERE s.status = 'active' 
+                AND (s.branch_id = ? OR s.branch_id IS NULL)
+                AND s.role NOT IN ('admin', 'manager', 'receptionist')
+            `).all(branch.id);
+
+                const startFull = date + ' ' + startTime;
+                const endFull = date + ' ' + endTime;
+
+                return staff.filter(s => {
+                    const conflicts = db.prepare(`
+                    SELECT COUNT(*) as cnt FROM ${tenantId}_staff_bookings
+                    WHERE staffId = ? AND status = 'active'
+                    AND startTime < ? AND endTime > ?
+                `).get(s.id, endFull, startFull);
+                    return conflicts.cnt === 0;
+                });
+            } catch {
+                return [];
+            }
+        };
+
+        // STEP 2: Check availability and show confirmation
+        if (!confirm) {
+            const bookings = db.prepare(`
+            SELECT id, customer_name, service, branch, date, time, staff_id, staff_name, notes
+            FROM ${tenantId}_bookings 
+            WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
+            ORDER BY date, time
+        `).all(phone);
+
+            if (bookings.length === 0) {
+                return 'NO_BOOKINGS';
+            }
+
+            const index = booking_index ? parseInt(booking_index, 10) - 1 : 0;
+            const oldBooking = bookings[index] || bookings[0];
+
+            const normalizedDate = normalizeDateToISO(new_date);
+
+            // Validate date is not in past
+            const today = new Date().toISOString().slice(0, 10);
+            if (normalizedDate < today) {
+                return 'DATE_IN_PAST';
+            }
+
+            // Get service duration
+            const serviceRow = db.prepare(`SELECT durationMinutes FROM ${tenantId}_services WHERE name = ?`).get(oldBooking.service);
+            const duration = serviceRow ? serviceRow.durationMinutes : 60;
+            const endTime24 = calculateEndTime(new_time, duration);
+
+            // Check salon hours
+            const dayType = isWeekendForDate(normalizedDate) ? 'weekend' : 'workday';
+            const timing = db.prepare(`SELECT open_time, close_time FROM ${tenantId}_salon_timings WHERE day_type = ?`).get(dayType);
+
+            if (timing) {
+                const toMins = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+                const reqMins = toMins(new_time);
+                const openMins = toMins(timing.open_time);
+                const closeMins = toMins(timing.close_time);
+
+                if (reqMins < openMins || reqMins > closeMins) {
+                    return `TIME_OUTSIDE_HOURS|${timing.open_time}|${timing.close_time}`;
+                }
+            }
+
+            // Check if time has passed for today
+            const todayISO = new Date().toISOString().slice(0, 10);
+            if (normalizedDate === todayISO) {
+                const now = new Date();
+                const currentMins = now.getHours() * 60 + now.getMinutes();
+                const [bh, bm] = new_time.split(':').map(Number);
+                const bookingMins = bh * 60 + bm;
+                if (bookingMins <= currentMins) {
+                    return 'TIME_IN_PAST';
+                }
+            }
+
+            // Check staff availability
+            const availableStaff = getAvailableStaffForVoice(oldBooking.branch, normalizedDate, new_time, endTime24);
+
+            if (availableStaff.length === 0) {
+                return 'NO_STAFF_AVAILABLE';
+            }
+
+            // Try to keep same staff, otherwise pick first available
+            let selectedStaff = availableStaff.find(s => s.id === oldBooking.staff_id);
+            if (!selectedStaff) {
+                selectedStaff = availableStaff[0];
+            }
+
+            return `READY_TO_RESCHEDULE|${oldBooking.id}|${oldBooking.date}|${oldBooking.time}|${oldBooking.service}|${normalizedDate}|${new_time}|${selectedStaff.name}`;
+        }
+
+        // STEP 3: Execute reschedule (when confirmed)
+        if (confirm === 'true') {
+            const { booking_id, new_date: finalDate, new_time: finalTime, staff_name: staffName } = args;
+
+            if (!booking_id || !finalDate || !finalTime || !staffName) {
+                return 'Missing required fields for reschedule.';
+            }
+
+            const oldBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(booking_id);
+            if (!oldBooking) return 'BOOKING_NOT_FOUND';
+
+            // Check reschedule limit
+            const rescheduleCount = db.prepare(`
+            SELECT COUNT(*) as count FROM ${tenantId}_booking_reschedules 
+            WHERE original_booking_id = ? OR new_booking_id = ?
+        `).get(booking_id, booking_id);
+
+            const settings = db.prepare(`SELECT value FROM ${tenantId}_business_settings WHERE key = 'max_reschedules'`).get();
+            const maxReschedules = settings ? parseInt(settings.value) : 2;
+
+            if (rescheduleCount.count >= maxReschedules) {
+                return `MAX_RESCHEDULES_EXCEEDED|${maxReschedules}`;
+            }
+
+            const normalizedDate = normalizeDateToISO(finalDate);
+            const serviceRow = db.prepare(`SELECT durationMinutes FROM ${tenantId}_services WHERE name = ?`).get(oldBooking.service);
+            const duration = serviceRow ? serviceRow.durationMinutes : 60;
+            const endTime = calculateEndTime(finalTime, duration);
+
+            const staffRow = db.prepare(`SELECT id FROM ${tenantId}_staff WHERE name = ?`).get(staffName);
+            const staffId = staffRow ? staffRow.id : null;
+
+            const insertResult = db.prepare(`
+            INSERT INTO ${tenantId}_bookings (
+                customer_name, phone, service, branch, date, time, endTime,
+                status, source, notes, staff_id, staff_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 'voice_reschedule', ?, ?, ?)
+        `).run(
+                oldBooking.customer_name, oldBooking.phone, oldBooking.service, oldBooking.branch,
+                normalizedDate, finalTime, endTime, oldBooking.notes || null, staffId, staffName
+            );
+
+            const newBookingId = insertResult.lastInsertRowid;
+
+            db.prepare(`UPDATE ${tenantId}_bookings SET status = 'rescheduled' WHERE id = ?`).run(booking_id);
+
+            if (oldBooking.staff_id) {
+                db.prepare(`UPDATE ${tenantId}_staff_bookings SET status = 'canceled' WHERE bookingId = ?`).run(booking_id);
+            }
+
+            const branchRow = db.prepare(`SELECT id FROM ${tenantId}_branches WHERE name = ?`).get(oldBooking.branch);
+            db.prepare(`
+            INSERT INTO ${tenantId}_staff_bookings (staffId, bookingId, branchId, startTime, endTime, status)
+            VALUES (?, ?, ?, ?, ?, 'active')
+        `).run(staffId, newBookingId, branchRow?.id || null,
+                `${normalizedDate} ${finalTime}`, `${normalizedDate} ${endTime}`);
+
+            db.prepare(`
+            INSERT INTO ${tenantId}_booking_reschedules (
+                original_booking_id, new_booking_id, old_date, old_time, new_date, new_time, reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(booking_id, newBookingId, oldBooking.date, oldBooking.time,
+                normalizedDate, finalTime, 'Rescheduled via voice call');
+
+            db.prepare(`
+            INSERT INTO ${tenantId}_customer_metrics (phone, total_bookings, reschedules)
+            VALUES (?, 1, 1)
+            ON CONFLICT(phone) DO UPDATE SET
+                reschedules = reschedules + 1,
+                updated_at = datetime('now')
+        `).run(oldBooking.phone);
+
+            const newBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(newBookingId);
+            patchCache(tenantId, 'bookings', 'upsert', newBooking).catch(e => console.error('[cache] voice reschedule:', e.message));
+
+            return `RESCHEDULED|${normalizedDate}|${finalTime}|${staffName}|${oldBooking.service}`;
+        }
+
+        return 'Please confirm reschedule by saying YES.';
+    }
 
     return `Unknown tool: ${name}`;
+
 }
 
 // ── WebSocket call server ────────────────────────────────────────────────────
@@ -337,6 +642,24 @@ BOOKING (when caller wants to book an appointment):
 4. Once ALL fields are collected, read them back to the caller and ask: "Shall I confirm this booking?"
 5. As soon as the caller says yes/confirm/theek hai/okay, call create_booking right away — do not ask again.
 
+CANCELLATION (when caller wants to cancel an appointment):
+1. Ask for the caller's phone number they used for booking.
+2. Call cancel_booking with the phone number.
+3. If the tool returns a successful cancellation message, confirm it to the caller:
+   English: "Your appointment has been cancelled. We hope to see you another time!"
+   Urdu: "Aap ki appointment cancel kar di gayi hai. Hum umeed karte hain ke aap phir aayenge!"
+4. If no bookings are found, tell the caller: "I couldn't find any upcoming bookings for that phone number."
+
+RESCHEDULE (when caller wants to change appointment time/date):
+1. Ask for the caller's phone number they used for booking.
+2. Ask for the new date and new time they prefer.
+3. Call reschedule_booking with the phone number, new date, and new time.
+4. If successful, confirm the new details:
+   English: "Your appointment has been rescheduled to [date] at [time]."
+   Urdu: "Aap ki appointment [date] ko [time] par tabdeel kar di gayi hai."
+5. If no bookings found or staff unavailable, explain the issue and offer alternatives
+
+
 PRICES / SERVICES / BRANCHES / DEALS:
 - For any question about prices or services: call get_services.
 - For any question about locations or branches: call get_branches — never guess or use your own knowledge.
@@ -388,6 +711,30 @@ GENERAL:
                                             time: { type: 'string', description: 'Appointment time in HH:MM 24-hour format, e.g. "14:00"' },
                                         },
                                         required: ['name', 'phone', 'service', 'branch', 'date', 'time'],
+                                    },
+                                },
+                                {
+                                    name: 'cancel_booking',
+                                    description: 'Cancel an existing booking using phone number',
+                                    parameters: {
+                                        type: 'object',
+                                        properties: {
+                                            phone: { type: 'string', description: 'Phone number used for booking' },
+                                        },
+                                        required: ['phone'],
+                                    },
+                                },
+                                {
+                                    name: 'reschedule_booking',
+                                    description: 'Reschedule an existing booking',
+                                    parameters: {
+                                        type: 'object',
+                                        properties: {
+                                            phone: { type: 'string', description: 'Phone number used for booking' },
+                                            new_date: { type: 'string', description: 'New appointment date' },
+                                            new_time: { type: 'string', description: 'New appointment time' },
+                                        },
+                                        required: ['phone', 'new_date', 'new_time'],
                                     },
                                 },
                             ],

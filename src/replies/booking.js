@@ -413,11 +413,13 @@ function handleCancellationFlow(userId, text, session, platform, tenantId) {
       return "No upcoming bookings found for this phone number. Type *book* to make a new appointment.";
     }
 
+    // FIX: Use correct state and variable names
     setSession(userId, tenantId, {
-      ...session,
-      state: 'CANCEL_SELECT_BOOKING',
-      phone,
-      bookings
+      state: 'CANCEL_SELECT_BOOKING',  // ← Correct state
+      phone: phone,                     // ← Use 'phone' not 'extractedPhone'
+      bookings: bookings,               // ← Store the bookings array
+      platform: session.platform,
+      lastUpdated: Date.now()
     });
 
     let reply = `Found ${bookings.length} upcoming booking(s):\n\n`;
@@ -446,9 +448,9 @@ function handleCancellationFlow(userId, text, session, platform, tenantId) {
     const settings = db.prepare(`SELECT value FROM ${tenantId}_business_settings WHERE key = 'cancellation_hours'`).get();
     const cancellationHours = settings ? parseInt(settings.value) : 24;
 
-    if (hoursUntil < cancellationHours) {
-      return `⚠️ Cannot cancel within ${cancellationHours} hours of your appointment.\n\nPlease call the salon directly to cancel or reschedule.`;
-    }
+    // if (hoursUntil < cancellationHours) {
+    //   return `⚠️ Cannot cancel within ${cancellationHours} hours of your appointment.\n\nPlease call the salon directly to cancel or reschedule.`;
+    // }
 
     setSession(userId, tenantId, {
       ...session,
@@ -493,7 +495,7 @@ function handleCancellationFlow(userId, text, session, platform, tenantId) {
 
       // Update cache - FIXED: added tenantId prefix
       const updatedBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(session.cancelBookingId);
-      patchCache('bookings', 'upsert', updatedBooking).catch(e => console.error('[cache] cancel:', e.message));
+      patchCache(tenantId, 'bookings', 'upsert', updatedBooking).catch(e => console.error('[cache] cancel:', e.message));
 
       clearSession(userId, tenantId);
 
@@ -728,7 +730,7 @@ function handleRescheduleFlow(userId, text, session, platform, tenantId) {
       `).run(session.phone);
 
       const newBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(newBookingId);
-      patchCache('bookings', 'upsert', newBooking).catch(e => console.error('[cache] reschedule:', e.message));
+      patchCache(tenantId, 'bookings', 'upsert', newBooking).catch(e => console.error('[cache] reschedule:', e.message));
 
       clearSession(userId, tenantId);
 
@@ -910,7 +912,7 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
 
     setSession(userId, tenantId, { ...session, state: 'ASK_TIME', date: normalizedDate });
 
-    const timing = getSalonTiming(normalizedDate,tenantId);
+    const timing = getSalonTiming(normalizedDate, tenantId);
     let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
     if (timing) {
       timeHint = `🕐 Available: *${formatTime12h(timing.open_time)} – ${formatTime12h(timing.close_time)}*\n\n${timeHint}`;
@@ -935,7 +937,7 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
 
     const time24 = parseTimeTo24h(timeText);
     if (time24) {
-      const timing = getSalonTiming(session.date,tenantId);
+      const timing = getSalonTiming(session.date, tenantId);
       if (timing) {
         const requested = toMinutes(time24);
         const open = toMinutes(timing.open_time);
@@ -973,7 +975,7 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
         const now = new Date();
         const currentMins = now.getHours() * 60 + now.getMinutes();
         if (toMinutes(time24) <= currentMins) {
-          const nowFmt = formatTime12h(`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`);
+          const nowFmt = formatTime12h(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
           const plt = session.platform || 'whatsapp';
           const msg = `That time has already passed (current time: ${nowFmt}). Please choose a later time today.`;
           return (plt === 'instagram' || plt === 'facebook' || plt === 'webchat' || plt === 'voice')
@@ -1002,7 +1004,7 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
       }
     } else if (!staffId) {
       // User did not choose staff — pick random available
-      const randomStaff = pickRandomAvailableStaff(session.branch, session.date, time24, endTime24,tenantId);
+      const randomStaff = pickRandomAvailableStaff(session.branch, session.date, time24, endTime24, tenantId);
       if (randomStaff) {
         staffId = randomStaff.id;
         staffName = randomStaff.name;
