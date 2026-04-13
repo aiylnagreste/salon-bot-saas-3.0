@@ -901,6 +901,13 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
       );
     }
     const normalizedDate = normalizeDateToISO(dateText);
+    const todayISO = new Date().toISOString().slice(0, 10);
+    if (normalizedDate < todayISO) {
+      const plt = session.platform || 'whatsapp';
+      const msg = "That date has already passed. Please choose today or a future date.";
+      return (plt === 'webchat' || plt === 'voice') ? msg : `⚠️ ${msg}`;
+    }
+
     setSession(userId, tenantId, { ...session, state: 'ASK_TIME', date: normalizedDate });
 
     const timing = getSalonTiming(normalizedDate,tenantId);
@@ -957,6 +964,21 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
             `🕐 Available: *${openFmt} – ${closeFmt}*\n\n` +
             'Please choose a time within that range.'
           );
+        }
+      }
+
+      // Reject times that have already passed for today's bookings
+      const todayISO = new Date().toISOString().slice(0, 10);
+      if (session.date === todayISO) {
+        const now = new Date();
+        const currentMins = now.getHours() * 60 + now.getMinutes();
+        if (toMinutes(time24) <= currentMins) {
+          const nowFmt = formatTime12h(`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`);
+          const plt = session.platform || 'whatsapp';
+          const msg = `That time has already passed (current time: ${nowFmt}). Please choose a later time today.`;
+          return (plt === 'instagram' || plt === 'facebook' || plt === 'webchat' || plt === 'voice')
+            ? msg
+            : `⚠️ ${msg}`;
         }
       }
     }

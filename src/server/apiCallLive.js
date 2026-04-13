@@ -127,6 +127,19 @@ async function handleVoiceTool(name, args, tenantId) {
             }
         }
 
+        // If booking is for today, reject times that have already passed
+        const todayISO = new Date().toISOString().slice(0, 10);
+        if (normalizedDate === todayISO && time) {
+            const now = new Date();
+            const currentMins = now.getHours() * 60 + now.getMinutes();
+            const [bh, bm] = time.trim().split(':').map(Number);
+            const bookingMins = bh * 60 + bm;
+            if (bookingMins <= currentMins) {
+                const nowFmt = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                return `Sorry, ${time} has already passed today — current time is ${nowFmt}. Please choose a later time.`;
+            }
+        }
+
         // Cache-first service lookup with tenant prefix
         let svcRow = null;
         if (cache?.services?.length) {
@@ -306,6 +319,11 @@ GREETING:
   English: "Hello! Welcome to ${salonName}. How can I help you today?"
   Urdu: "Assalamu Alaikum! ${salonName} mein khush aamdeed. Main aap ki kya khidmat kar sakti hoon?"
 
+CRITICAL — TOOL DATA ONLY:
+- NEVER mention branch names, service names, prices, or locations from your own knowledge.
+- ALL branch and service information MUST come exclusively from get_branches and get_services tool results.
+- If you have not called the tool yet, you do not know the branches or services — call the tool first.
+
 BOOKING (when caller wants to book an appointment):
 1. Immediately call get_services AND get_branches so you know what is available.
 2. Collect these required fields — use values the caller already mentioned, ask only for missing ones:
@@ -313,15 +331,15 @@ BOOKING (when caller wants to book an appointment):
    • phone   — digits only, no spaces (e.g. "03001234567")
    • service — must exactly match a name returned by get_services
    • branch  — must exactly match a name returned by get_branches
-   • date    — convert to YYYY-MM-DD format. Reject past dates.
-   • time    — convert to HH:MM 24-hour format (e.g. "2 baje" → "14:00", "3 pm" → "15:00")
-3. Optionally call get_timings to verify the requested time is within salon hours.
-4. Once ALL fields are collected, immediately read them back to the caller and ask: "Shall I confirm this booking?"
+   • date    — accept any natural date the caller gives ("kal", "Friday", "30 April") and YOU convert it internally. NEVER ask the caller to type a date in any specific format. Reject past dates — ask them to choose today or a future date.
+   • time    — accept any natural time ("2 baje", "3 pm", "half past two") and YOU convert it to HH:MM internally. NEVER ask the caller to type a time in any specific format. Only accept future times — if the date is today and the time has already passed, ask them to choose a later time.
+3. Call get_timings to verify the requested time is within salon hours.
+4. Once ALL fields are collected, read them back to the caller and ask: "Shall I confirm this booking?"
 5. As soon as the caller says yes/confirm/theek hai/okay, call create_booking right away — do not ask again.
 
 PRICES / SERVICES / BRANCHES / DEALS:
 - For any question about prices or services: call get_services.
-- For any question about locations or branches: call get_branches.
+- For any question about locations or branches: call get_branches — never guess or use your own knowledge.
 
 GENERAL:
 - Keep responses short and natural — this is a phone call, not a chat.
