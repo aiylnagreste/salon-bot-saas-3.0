@@ -584,7 +584,8 @@ app.get("/salon-config/:tenantId", async (req, res) => {
     bot_name: settings.bot_name || tenant.salon_name,
     primary_color: settings.primary_color || "#8b4a6b",
     // ws_url: direct Railway URL for WebSocket (Vercel can't upgrade WebSockets)
-    ws_url: (process.env.PUBLIC_URL || "").replace(/\/$/, ""),
+    // Falls back to the request's own origin so it always points to the backend, not the Vercel proxy.
+    ws_url: (process.env.FRONTEND_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, ""),
   });
 });
 
