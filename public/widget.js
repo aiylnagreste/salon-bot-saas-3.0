@@ -22,20 +22,22 @@
   // Populated from salon-config; falls back to baseUrl (works in local dev).
   var wsBaseUrl = baseUrl;
 
-  // Fetch salon config if tenantId is available (async, doesn't block)
-  if (tenantId) {
-    fetch(baseUrl + '/salon-config/' + tenantId)
-      .then(function (res) { return res.json(); })
-      .then(function (config) {
-        if (config && config.bot_name) {
-          botName = config.bot_name;
-          salonName = config.salon_name || botName; // Store salon name
-        }
-        if (config && config.ws_url) {
-          wsBaseUrl = config.ws_url;
-        }
-      });
-  }
+  // configReady: promise that resolves once salon-config is fetched.
+  // startVoiceCall waits on this so wsBaseUrl is always set before connecting.
+  var configReady = tenantId
+    ? fetch(baseUrl + '/salon-config/' + tenantId)
+        .then(function (res) { return res.json(); })
+        .then(function (config) {
+          if (config && config.bot_name) {
+            botName = config.bot_name;
+            salonName = config.salon_name || botName;
+          }
+          if (config && config.ws_url) {
+            wsBaseUrl = config.ws_url;
+          }
+        })
+        .catch(function () { /* use defaults on error */ })
+    : Promise.resolve();
 
   // ── Session ID (persistent across page loads) ──────────────────────────────
   var SESSION_KEY = 'salon_bot_session';
@@ -275,6 +277,14 @@
 
   // ── Gemini Voice Call (WebSocket) ──────────────────────────────────────────
   function startVoiceCall(modal) {
+    // Wait for salon-config to resolve so wsBaseUrl is the Railway backend URL,
+    // not the Vercel frontend (which cannot upgrade WebSocket connections).
+    configReady.then(function () {
+      _connectVoiceCall(modal);
+    });
+  }
+
+  function _connectVoiceCall(modal) {
     var wsUrl = wsBaseUrl.replace('https', 'wss').replace('http', 'ws') + '/api/call?tenantId=' + encodeURIComponent(tenantId);
     console.log('[call] startVoiceCall() connecting to', wsUrl);
 
