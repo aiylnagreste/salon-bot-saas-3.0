@@ -6,4 +6,6 @@ node_modules/
 *.tsx
 .env.local
 salon-data.json
+.worktrees/
+worktrees/
 
