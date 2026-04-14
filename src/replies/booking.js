@@ -651,7 +651,7 @@ function handleRescheduleFlow(userId, text, session, platform, tenantId) {
   if (session.state === 'RESCHEDULE_ASK_TIME') {
     const timeText = extractTime(text);
     if (!isValidTime(timeText,session.dateForTimeCheck)) {
-      return "Please enter a valid time (e.g., 2:00 PM, 11am, 14:00).";
+      return "Please enter a valid time (e.g., 2:00 PM, 11am, 14:00). \n\nNote: The time you mentioned has either passed or is not in a valid format.";
     }
 
     const time24 = parseTimeTo24h(timeText);
@@ -907,7 +907,8 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
     if (!isValidTime(timeText, session.dateForTimeCheck)) {
       return (
         '⚠️ Please enter a valid *time*.\n\n' +
-        '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_'
+        '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_'+
+        '\n\nNote: The time you mentioned has either passed or is not in a valid format.'
       );
     }
 

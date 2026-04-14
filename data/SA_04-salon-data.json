@@ -1,9 +1,9 @@
 {
   "meta": {
     "version": 1,
-    "generatedAt": "2026-04-13T08:06:03.612Z",
-    "updatedAt": "2026-04-14T09:49:31.837Z",
-    "tenantId": "SA_02"
+    "generatedAt": "2026-04-14T04:47:10.666Z",
+    "updatedAt": "2026-04-14T09:49:31.825Z",
+    "tenantId": "SA_04"
   },
   "deals": [
     {
@@ -11,32 +11,48 @@
       "title": "Weekend Special",
       "description": "Get 20% off all hair services every Saturday and Sunday!",
       "active": 1,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 4,
       "title": "Student Discount",
       "description": "Show your student ID and enjoy 15% off any service.",
       "active": 1,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 5,
       "title": "Loyalty Package",
       "description": "Book 5 sessions and get the 6th one FREE!",
       "active": 1,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 6,
       "title": "New Client Offer",
       "description": "First visit? Enjoy a complimentary hair treatment with any service.",
       "active": 0,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
+    },
+    {
+      "id": 7,
+      "title": "Weekend Special",
+      "description": "Get 20% off all hair services every Saturday and Sunday!",
+      "active": 1,
+      "created_at": "2026-04-13 11:19:02",
+      "updated_at": "2026-04-13 11:19:02"
+    },
+    {
+      "id": 8,
+      "title": "New Client Offer",
+      "description": "First visit? Enjoy a complimentary hair treatment with any service.",
+      "active": 1,
+      "created_at": "2026-04-13 11:19:02",
+      "updated_at": "2026-04-13 11:19:02"
     }
   ],
   "services": [
@@ -47,8 +63,8 @@
       "description": "Whitening Glow Skin Polisher · Gold 4 Creams Massage · Neck & Shoulder Relaxing Massage · Whitening Manicure · Whitening Pedicure · Hands & Feet Polisher · Nail Cuticles · Hands & Feet Massage · Hair Protein Application · Eyebrows & Upper Lips",
       "branch": "All Branches",
       "durationMinutes": 120,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 10,
@@ -57,8 +73,8 @@
       "description": "Hand Polisher · Hand Massage · Hand Scrub",
       "branch": "All Branches",
       "durationMinutes": 100,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 9,
@@ -67,8 +83,8 @@
       "description": "Hand Massage · Hand Scrub · Hand Polisher · Simple Nail Paint",
       "branch": "All Branches",
       "durationMinutes": 90,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 19,
@@ -77,8 +93,8 @@
       "description": "Bridal First Day OR Walima Makeup · Bridal 6D Eyelashes · Bridal Hair Styling · Dupatta Settings · Nail Paint · 2 Party Makeups Free (with Eyelashes & Hair Styling)",
       "branch": "All Branches",
       "durationMinutes": 240,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 21,
@@ -87,8 +103,8 @@
       "description": "Signature Bridal Makeup · 2 Facials (Janssen + Hydra) · 2x Mani & Pedi (Skin Truth + Whitening) · Full Body Waxing · Full Body Scrubbing · Full Body Polisher · Eyebrows & Upper Lips · Hair Cutting · Hair Protein Treatment",
       "branch": "All Branches",
       "durationMinutes": 360,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 22,
@@ -97,8 +113,8 @@
       "description": "Bridal Makeup · 2 Facials (Whitening + Gold) · 2x Mani & Pedi (Skin Truth + Whitening) · Full Body Wax · Full Body Polisher · Eyebrows & Upper Lips · Hair Protein Treatment",
       "branch": "All Branches",
       "durationMinutes": 300,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 6,
@@ -107,8 +123,8 @@
       "description": "Derma Clear Facial · Whitening Skin Polisher · Derma Clear 4 Creams Massage · Face Mask · L'Oréal Hair Protein Treatment · Eyebrows & Upper Lips · Manicure · Pedicure · Hand & Feet Polisher · Nail Cuticles · Shoulders Relaxing Massage",
       "branch": "All Branches",
       "durationMinutes": 120,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 11,
@@ -117,8 +133,8 @@
       "description": "Classic Lash Set · Face 2 Cream Gold Massage · Gold Face Mask (Free)",
       "branch": "All Branches",
       "durationMinutes": 120,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 12,
@@ -127,8 +143,8 @@
       "description": "Hybrid Lash Set · Face 2 Cream Gold Massage · Gold Face Mask (Free)",
       "branch": "All Branches",
       "durationMinutes": 150,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 13,
@@ -137,8 +153,8 @@
       "description": "Volume Lash Set · Face 2 Cream Gold Massage · Gold Face Mask (Free)",
       "branch": "All Branches",
       "durationMinutes": 180,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 5,
@@ -147,8 +163,8 @@
       "description": "Fruit Facial · Double Whitening Skin Glow Polisher · 4 Fruit Creams Massage · Shoulder Relaxing Massage · Fruit Face Mask · Blackhead Removal · Hand & Feet Whitening Polisher · Eyebrows & Upper Lips · L'Oréal Hair Protein Treatment Application",
       "branch": "All Branches",
       "durationMinutes": 90,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 2,
@@ -157,8 +173,8 @@
       "description": "Full Body Waxing · Bikini & Underarms Waxing · Half Arms Polisher · Feet Polisher",
       "branch": "All Branches",
       "durationMinutes": 90,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 8,
@@ -167,8 +183,8 @@
       "description": "Gold 3 Creams Massage · Whitening Hands & Feet Polisher · Gold 3 Creams Hand Massage · Gold 3 Creams Feet Massage · Gold Hand & Feet Mask · Nail Cuticles",
       "branch": "All Branches",
       "durationMinutes": 75,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 14,
@@ -177,8 +193,8 @@
       "description": "Hair Cutting · Hair Shampoo Wash · Hair Protein Treatment · Hair Relaxing Massage · Hair High Frequency · Hair Setting",
       "branch": "All Branches",
       "durationMinutes": 90,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 15,
@@ -187,8 +203,8 @@
       "description": "Hair Wash · Hair Cutting · Hair Dry Only",
       "branch": "All Branches",
       "durationMinutes": 45,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 17,
@@ -197,8 +213,8 @@
       "description": "Free: Hair Cutting · Hair Wash · Hair Glossing · Hair Setting · Hair Protein Mask Wash | Shoulder Rs.5,999 · Elbow Rs.6,999 · Waist Rs.8,999 · Hip Rs.10,999",
       "branch": "All Branches",
       "durationMinutes": 180,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 1,
@@ -207,8 +223,8 @@
       "description": "Whitening Glow Polisher · Hydra Machine (8 Tools) · Face Massage · Shoulder Massage · Vitamin C Mask with LED · Whitening Manicure · Whitening Pedicure · Hands & Feet Massage · Hands & Feet Polisher · Nail Cuticles · Eyebrows & Upper Lips",
       "branch": "All Branches",
       "durationMinutes": 120,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 4,
@@ -217,8 +233,8 @@
       "description": "Janssen 4 Creams Massage · Whitening Skin Glow Polisher · Blackheads Removal · Shoulder Massage · Janssen Peel-Off Mask · Eyebrows & Upper Lips · Skin Truth Manicure · Skin Truth Pedicure · Hands & Feet Massage · Hands & Feet Polisher · Nail Cuticles · Feet Mask",
       "branch": "All Branches",
       "durationMinutes": 150,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 16,
@@ -227,8 +243,8 @@
       "description": "Free: Hair Cutting · Hair Glossing · 1x Hair Wash & Mask | Shoulder Rs.5,999 · Elbow Rs.7,999 · Waist Rs.9,999 · Hip Rs.11,999",
       "branch": "All Branches",
       "durationMinutes": 240,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 20,
@@ -237,8 +253,8 @@
       "description": "Nikkah Makeup · Janssen Whitening Facial · Whitening Manicure · Whitening Pedicure · Threading · Hair Botox Treatment",
       "branch": "All Branches",
       "durationMinutes": 180,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 18,
@@ -247,8 +263,8 @@
       "description": "Party Makeup · Hair Styling · 6D Eyelashes · Nail Paint",
       "branch": "All Branches",
       "durationMinutes": 120,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     },
     {
       "id": 7,
@@ -257,8 +273,8 @@
       "description": "Whitening Manicure · Whitening Pedicure · Whitening Hands & Feet Polisher · Hands & Feet Massage · Nail Cuticles",
       "branch": "All Branches",
       "durationMinutes": 60,
-      "created_at": "2026-04-10 04:50:28",
-      "updated_at": "2026-04-10 04:50:28"
+      "created_at": "2026-04-13 10:49:42",
+      "updated_at": "2026-04-13 10:49:42"
     }
   ]
 }
