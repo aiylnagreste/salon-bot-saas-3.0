@@ -669,6 +669,8 @@ function storeResetToken(tenantId, tokenHash, expiresAt) {
     const db = getSuperDb();
     db.transaction(() => {
         db.prepare(`DELETE FROM password_reset_tokens WHERE tenant_id = ?`).run(tenantId);
+        // Periodic cleanup of expired and used tokens across all tenants
+        db.prepare(`DELETE FROM password_reset_tokens WHERE used = 1 OR expires_at < datetime('now')`).run();
         db.prepare(`
             INSERT INTO password_reset_tokens (tenant_id, token_hash, expires_at)
             VALUES (?, ?, ?)

@@ -36,6 +36,7 @@ DB_PATH=                  # default: ./salon.db
 SUPER_DB_PATH=            # default: ./super.db
 SALON_DATA_KEY=           # key for /salon-data.json endpoint (default: adminkey123)
 NO_SHOW_GRACE_MIN=        # minutes after appointment before auto-no-show (default: 30)
+FRONTEND_URL=             # Vercel frontend URL (used in email links, reset URLs)
 PORT=                     # default: 3000
 ```
 
