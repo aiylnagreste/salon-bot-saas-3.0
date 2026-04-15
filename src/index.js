@@ -2136,11 +2136,15 @@ app.post("/super-admin/api/plans", requireSuperAdminAuth, (req, res) => {
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (price_cents === undefined || price_cents === null)
         return res.status(400).json({ error: 'price_cents is required' });
+    const parsedPrice = parseInt(price_cents, 10);
+    if (isNaN(parsedPrice) || parsedPrice < 0)
+        return res.status(400).json({ error: 'price_cents must be a non-negative integer' });
+    const parsedMaxServices = parseInt(max_services || 10, 10);
     try {
         const plan = createPlan({
-            name, description, price_cents: parseInt(price_cents, 10),
+            name, description, price_cents: parsedPrice,
             billing_cycle: billing_cycle || 'monthly',
-            max_services: parseInt(max_services || 10, 10),
+            max_services: (isNaN(parsedMaxServices) || parsedMaxServices < 1) ? 10 : parsedMaxServices,
             whatsapp_access: !!whatsapp_access,
             instagram_access: !!instagram_access,
             facebook_access: !!facebook_access,
@@ -2155,10 +2159,18 @@ app.post("/super-admin/api/plans", requireSuperAdminAuth, (req, res) => {
 
 app.put("/super-admin/api/plans/:planId", requireSuperAdminAuth, (req, res) => {
     const planId = parseInt(req.params.planId, 10);
+    if (isNaN(planId)) return res.status(400).json({ error: 'planId must be a number' });
     const plan = getPlanById(planId);
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
     try {
-        const updated = updatePlan(planId, req.body);
+        const { name, description, price_cents: pc, billing_cycle, max_services: ms,
+                whatsapp_access, instagram_access, facebook_access, ai_calls_access,
+                stripe_price_id, is_active } = req.body;
+        const updated = updatePlan(planId, {
+            name, description, price_cents: pc, billing_cycle, max_services: ms,
+            whatsapp_access, instagram_access, facebook_access, ai_calls_access,
+            stripe_price_id, is_active,
+        });
         res.json(updated);
     } catch (err) {
         logger.error('[plan update]', err.message);
@@ -2168,6 +2180,7 @@ app.put("/super-admin/api/plans/:planId", requireSuperAdminAuth, (req, res) => {
 
 app.delete("/super-admin/api/plans/:planId", requireSuperAdminAuth, (req, res) => {
     const planId = parseInt(req.params.planId, 10);
+    if (isNaN(planId)) return res.status(400).json({ error: 'planId must be a number' });
     const plan = getPlanById(planId);
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
     try {
