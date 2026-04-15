@@ -31,6 +31,17 @@ const {
   clearWebhookChannel,
   updateTenantPassword,
   changeSuperAdminPassword,
+  getAllPlans,
+  getActivePlans,
+  getPlanById,
+  createPlan,
+  updatePlan,
+  deletePlan,
+  createSubscription,
+  getSubscriptions,
+  storeResetToken,
+  getValidResetToken,
+  markResetTokenUsed,
 } = require("./db/tenantManager");
 
 // Auth middleware
@@ -47,6 +58,9 @@ const { handleFacebook, verifyFacebook } = require("./handlers/facebook");
 
 // Chat router (web widget)
 const { routeMessage } = require("./core/router");
+
+const { sendWelcomeEmail, sendPasswordResetEmail } = require('./services/emailService');
+const { createCheckoutSession, constructWebhookEvent } = require('./services/stripeService');
 
 // ── JWT secret — REQUIRED in production ──────────────────────────────────────
 const JWT_SECRET = process.env.TENANT_JWT_SECRET;
@@ -2103,6 +2117,75 @@ app.put("/super-admin/api/change-password", requireSuperAdminAuth, (req, res) =>
 
   changeSuperAdminPassword(req.superAdmin.username, newPassword);
   res.json({ ok: true });
+});
+
+// ── Super Admin — Plan Management ─────────────────────────────────────────────
+
+app.get("/super-admin/api/plans", requireSuperAdminAuth, (_req, res) => {
+    try {
+        res.json(getAllPlans());
+    } catch (err) {
+        logger.error('[plans list]', err.message);
+        res.status(500).json({ error: 'Failed to fetch plans' });
+    }
+});
+
+app.post("/super-admin/api/plans", requireSuperAdminAuth, (req, res) => {
+    const { name, description, price_cents, billing_cycle, max_services,
+            whatsapp_access, instagram_access, facebook_access, ai_calls_access } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (price_cents === undefined || price_cents === null)
+        return res.status(400).json({ error: 'price_cents is required' });
+    try {
+        const plan = createPlan({
+            name, description, price_cents: parseInt(price_cents, 10),
+            billing_cycle: billing_cycle || 'monthly',
+            max_services: parseInt(max_services || 10, 10),
+            whatsapp_access: !!whatsapp_access,
+            instagram_access: !!instagram_access,
+            facebook_access: !!facebook_access,
+            ai_calls_access: !!ai_calls_access,
+        });
+        res.status(201).json(plan);
+    } catch (err) {
+        logger.error('[plan create]', err.message);
+        res.status(500).json({ error: 'Failed to create plan' });
+    }
+});
+
+app.put("/super-admin/api/plans/:planId", requireSuperAdminAuth, (req, res) => {
+    const planId = parseInt(req.params.planId, 10);
+    const plan = getPlanById(planId);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    try {
+        const updated = updatePlan(planId, req.body);
+        res.json(updated);
+    } catch (err) {
+        logger.error('[plan update]', err.message);
+        res.status(500).json({ error: 'Failed to update plan' });
+    }
+});
+
+app.delete("/super-admin/api/plans/:planId", requireSuperAdminAuth, (req, res) => {
+    const planId = parseInt(req.params.planId, 10);
+    const plan = getPlanById(planId);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    try {
+        deletePlan(planId);
+        res.json({ ok: true });
+    } catch (err) {
+        logger.error('[plan delete]', err.message);
+        res.status(500).json({ error: 'Failed to delete plan' });
+    }
+});
+
+app.get("/super-admin/api/subscriptions", requireSuperAdminAuth, (_req, res) => {
+    try {
+        res.json(getSubscriptions());
+    } catch (err) {
+        logger.error('[subscriptions list]', err.message);
+        res.status(500).json({ error: 'Failed to fetch subscriptions' });
+    }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
