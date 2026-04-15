@@ -1,17 +1,22 @@
 "use strict";
 
+let _stripe = null;
 function getStripe() {
     if (!process.env.STRIPE_SECRET_KEY) {
         throw new Error('STRIPE_SECRET_KEY not set');
     }
-    const Stripe = require('stripe');
-    return Stripe(process.env.STRIPE_SECRET_KEY);
+    if (!_stripe) _stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    return _stripe;
 }
 
 /**
  * Create a Stripe Checkout Session for a plan subscription.
  */
-async function createCheckoutSession({ planId, stripePriceId, email, ownerName, salonName, phone, successUrl, cancelUrl, registrationData }) {
+async function createCheckoutSession({ planId, stripePriceId, email, ownerName, salonName, phone, successUrl, cancelUrl }) {
+    const required = { planId, stripePriceId, email, successUrl, cancelUrl };
+    for (const [key, val] of Object.entries(required)) {
+        if (!val) throw new Error(`createCheckoutSession: missing required field "${key}"`);
+    }
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
@@ -24,8 +29,7 @@ async function createCheckoutSession({ planId, stripePriceId, email, ownerName, 
             plan_id: String(planId),
             owner_name: ownerName,
             salon_name: salonName,
-            phone,
-            registration_data: registrationData || '',
+            phone: String(phone || ''),
         },
         subscription_data: {
             metadata: {
@@ -41,6 +45,9 @@ async function createCheckoutSession({ planId, stripePriceId, email, ownerName, 
  * Construct and verify a Stripe webhook event.
  */
 function constructWebhookEvent(payload, signature) {
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+        throw new Error('STRIPE_WEBHOOK_SECRET not set');
+    }
     const stripe = getStripe();
     return stripe.webhooks.constructEvent(
         payload,
