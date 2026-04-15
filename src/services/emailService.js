@@ -1,10 +1,22 @@
 "use strict";
 const nodemailer = require('nodemailer');
 
+function esc(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function safeUrl(url) {
+    return (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) ? url : '#';
+}
+
 function createTransport() {
     return nodemailer.createTransport({
         host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587', 10),
+        port: (p => isNaN(p) ? 587 : p)(parseInt(process.env.SMTP_PORT || '587', 10)),
         secure: process.env.SMTP_PORT === '465',
         auth: {
             user: process.env.SMTP_USER,
@@ -38,23 +50,23 @@ async function sendWelcomeEmail({ to, ownerName, salonName, email, password, log
         </tr>
         <tr>
           <td style="padding:36px 40px;">
-            <p style="color:#374151;font-size:15px;margin:0 0 24px;">Hi ${ownerName},</p>
+            <p style="color:#374151;font-size:15px;margin:0 0 24px;">Hi ${esc(ownerName)},</p>
             <p style="color:#374151;font-size:15px;margin:0 0 24px;">
-              Your <strong>${salonName}</strong> account has been successfully created.
+              Your <strong>${esc(salonName)}</strong> account has been successfully created.
               Here are your login credentials:
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;border-radius:8px;padding:20px;margin-bottom:28px;">
               <tr><td>
                 <p style="margin:0 0 8px;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">Login Email</p>
-                <p style="margin:0 0 16px;font-size:16px;color:#1e293b;font-weight:500;">${email}</p>
+                <p style="margin:0 0 16px;font-size:16px;color:#1e293b;font-weight:500;">${esc(email)}</p>
                 <p style="margin:0 0 8px;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">Temporary Password</p>
-                <p style="margin:0;font-size:16px;color:#1e293b;font-weight:500;font-family:monospace;letter-spacing:0.1em;">${password}</p>
+                <p style="margin:0;font-size:16px;color:#1e293b;font-weight:500;font-family:monospace;letter-spacing:0.1em;">${esc(password)}</p>
               </td></tr>
             </table>
             <p style="color:#6b7280;font-size:13px;margin:0 0 24px;">
               Please change your password after your first login for security.
             </p>
-            <a href="${loginUrl}" style="display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:15px;font-weight:600;">
+            <a href="${safeUrl(loginUrl)}" style="display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:15px;font-weight:600;">
               Login to Dashboard
             </a>
           </td>
@@ -99,12 +111,12 @@ async function sendPasswordResetEmail({ to, ownerName, resetUrl }) {
         </tr>
         <tr>
           <td style="padding:36px 40px;">
-            <p style="color:#374151;font-size:15px;margin:0 0 20px;">Hi ${ownerName},</p>
+            <p style="color:#374151;font-size:15px;margin:0 0 20px;">Hi ${esc(ownerName)},</p>
             <p style="color:#374151;font-size:15px;margin:0 0 28px;">
               We received a request to reset your SalonBot password. Click the button below to set a new password.
               This link will expire in <strong>5 minutes</strong>.
             </p>
-            <a href="${resetUrl}" style="display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:15px;font-weight:600;">
+            <a href="${safeUrl(resetUrl)}" style="display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:15px;font-weight:600;">
               Reset Password
             </a>
             <p style="color:#6b7280;font-size:13px;margin:24px 0 0;">
@@ -115,7 +127,7 @@ async function sendPasswordResetEmail({ to, ownerName, resetUrl }) {
         <tr>
           <td style="padding:20px 40px 28px;border-top:1px solid #f1f5f9;">
             <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
-              SalonBot · <a href="${process.env.FRONTEND_URL}" style="color:#9ca3af;">${process.env.FRONTEND_URL}</a>
+              SalonBot · <a href="${safeUrl(process.env.FRONTEND_URL || 'https://salonbot.com')}" style="color:#9ca3af;">${esc(process.env.FRONTEND_URL || 'https://salonbot.com')}</a>
             </p>
           </td>
         </tr>
