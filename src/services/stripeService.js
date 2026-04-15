@@ -30,6 +30,7 @@ async function createCheckoutSession({ planId, stripePriceId, email, ownerName, 
             owner_name: ownerName,
             salon_name: salonName,
             phone: String(phone || ''),
+            email,
         },
         subscription_data: {
             metadata: {

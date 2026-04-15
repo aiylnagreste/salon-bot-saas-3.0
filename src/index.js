@@ -5,6 +5,7 @@
 
 require("dotenv").config();
 
+const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
 const http = require("http");
@@ -668,6 +669,9 @@ app.get("/api/public/plans", (_req, res) => {
 // ── Public — Stripe Checkout registration ─────────────────────────────────────
 
 app.post("/api/register", async (req, res) => {
+    if (rateLimit(`register:${req.ip}`, 5, 10 * 60_000))
+        return res.status(429).json({ error: 'Too many registration attempts. Please try again in 10 minutes.' });
+
     const { owner_name, salon_name, email, phone, plan_id } = req.body;
     if (!owner_name || !salon_name || !email || !phone || !plan_id)
         return res.status(400).json({ error: 'owner_name, salon_name, email, phone, plan_id are required' });
@@ -686,7 +690,6 @@ app.post("/api/register", async (req, res) => {
     // Free plan — create tenant directly
     if (plan.price_cents === 0) {
         try {
-            const crypto = require('crypto');
             const generatedPassword = crypto.randomBytes(8).toString('hex');
             const tenantId = await createTenant(owner_name, salon_name, email, phone, generatedPassword);
             createSubscription(tenantId, plan.id, null, null, null, null);
@@ -726,15 +729,17 @@ app.post("/api/register", async (req, res) => {
 
 app.post("/api/stripe/webhook", async (req, res) => {
     const signature = req.headers['stripe-signature'];
-    if (!signature)
-        return res.status(400).json({ error: 'Missing stripe-signature header' });
+    if (!signature) {
+        logger.warn('[stripe webhook] missing stripe-signature header, ignoring');
+        return res.status(200).json({ received: true });
+    }
 
     let event;
     try {
         event = constructWebhookEvent(req.body, signature);
     } catch (err) {
         logger.error('[stripe webhook] signature verification failed:', err.message);
-        return res.status(400).json({ error: `Webhook error: ${err.message}` });
+        return res.status(200).json({ received: true });
     }
 
     if (event.type === 'checkout.session.completed') {
@@ -759,7 +764,6 @@ app.post("/api/stripe/webhook", async (req, res) => {
         // Create tenant and send welcome email (non-blocking — always return 200)
         setImmediate(async () => {
             try {
-                const crypto = require('crypto');
                 const generatedPassword = crypto.randomBytes(8).toString('hex');
                 const tenantId = await createTenant(owner_name, salon_name, email, phone || '', generatedPassword);
 
@@ -767,6 +771,8 @@ app.post("/api/stripe/webhook", async (req, res) => {
                 if (planIdNum) {
                     createSubscription(tenantId, planIdNum, session.subscription || null,
                         session.customer || null, null, null);
+                } else {
+                    logger.warn(`[stripe webhook] no valid plan_id in metadata for session ${session.id}, subscription not created`);
                 }
 
                 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
