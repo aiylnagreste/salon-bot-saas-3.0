@@ -301,7 +301,55 @@ function initSuperSchema() {
             superDb.exec(`ALTER TABLE tenant_webhook_configs ADD COLUMN ${col} INTEGER DEFAULT 0`);
         } catch (_) { /* column already exists */ }
     }
-    
+
+    // Plans table
+    superDb.exec(`
+        CREATE TABLE IF NOT EXISTS plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            price_cents INTEGER NOT NULL DEFAULT 0,
+            billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+            max_services INTEGER NOT NULL DEFAULT 10,
+            whatsapp_access INTEGER NOT NULL DEFAULT 0,
+            instagram_access INTEGER NOT NULL DEFAULT 0,
+            facebook_access INTEGER NOT NULL DEFAULT 0,
+            ai_calls_access INTEGER NOT NULL DEFAULT 0,
+            stripe_price_id TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `);
+
+    // Subscriptions table
+    superDb.exec(`
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id TEXT NOT NULL REFERENCES salon_tenants(tenant_id) ON DELETE CASCADE,
+            plan_id INTEGER NOT NULL REFERENCES plans(id),
+            stripe_subscription_id TEXT UNIQUE,
+            stripe_customer_id TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            current_period_start TEXT,
+            current_period_end TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    `);
+
+    // Password reset tokens
+    superDb.exec(`
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    `);
+
 }
 
 function generateTenantId() {
@@ -533,6 +581,110 @@ function clearWebhookChannel(tenantId, channel) {
     db.prepare(`UPDATE tenant_webhook_configs SET ${fields}, updated_at = datetime('now') WHERE tenant_id = ?`).run(tenantId);
 }
 
+// ── Plans ─────────────────────────────────────────────────────────────────────
+
+function getAllPlans() {
+    const db = getSuperDb();
+    return db.prepare(`SELECT * FROM plans ORDER BY price_cents ASC`).all();
+}
+
+function getActivePlans() {
+    const db = getSuperDb();
+    return db.prepare(`SELECT * FROM plans WHERE is_active = 1 ORDER BY price_cents ASC`).all();
+}
+
+function getPlanById(planId) {
+    const db = getSuperDb();
+    return db.prepare(`SELECT * FROM plans WHERE id = ?`).get(planId);
+}
+
+function createPlan(data) {
+    const db = getSuperDb();
+    const { name, description, price_cents, billing_cycle, max_services,
+            whatsapp_access, instagram_access, facebook_access, ai_calls_access,
+            stripe_price_id } = data;
+    const result = db.prepare(`
+        INSERT INTO plans (name, description, price_cents, billing_cycle, max_services,
+            whatsapp_access, instagram_access, facebook_access, ai_calls_access, stripe_price_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, description || null, price_cents, billing_cycle || 'monthly',
+           max_services, whatsapp_access ? 1 : 0, instagram_access ? 1 : 0,
+           facebook_access ? 1 : 0, ai_calls_access ? 1 : 0, stripe_price_id || null);
+    return getPlanById(result.lastInsertRowid);
+}
+
+function updatePlan(planId, data) {
+    const db = getSuperDb();
+    const fields = [];
+    const values = [];
+    const allowed = ['name','description','price_cents','billing_cycle','max_services',
+                     'whatsapp_access','instagram_access','facebook_access','ai_calls_access',
+                     'stripe_price_id','is_active'];
+    for (const key of allowed) {
+        if (data[key] !== undefined) {
+            fields.push(`${key} = ?`);
+            values.push(typeof data[key] === 'boolean' ? (data[key] ? 1 : 0) : data[key]);
+        }
+    }
+    if (!fields.length) return getPlanById(planId);
+    fields.push(`updated_at = datetime('now')`);
+    values.push(planId);
+    db.prepare(`UPDATE plans SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return getPlanById(planId);
+}
+
+function deletePlan(planId) {
+    const db = getSuperDb();
+    db.prepare(`UPDATE plans SET is_active = 0, updated_at = datetime('now') WHERE id = ?`).run(planId);
+}
+
+// ── Subscriptions ─────────────────────────────────────────────────────────────
+
+function createSubscription(tenantId, planId, stripeSubId, stripeCustomerId, periodStart, periodEnd) {
+    const db = getSuperDb();
+    db.prepare(`
+        INSERT INTO subscriptions (tenant_id, plan_id, stripe_subscription_id, stripe_customer_id,
+            status, current_period_start, current_period_end)
+        VALUES (?, ?, ?, ?, 'active', ?, ?)
+    `).run(tenantId, planId, stripeSubId || null, stripeCustomerId || null,
+           periodStart || null, periodEnd || null);
+}
+
+function getSubscriptions() {
+    const db = getSuperDb();
+    return db.prepare(`
+        SELECT s.*, st.salon_name, st.owner_name, st.email, p.name as plan_name, p.price_cents, p.billing_cycle
+        FROM subscriptions s
+        JOIN salon_tenants st ON st.tenant_id = s.tenant_id
+        JOIN plans p ON p.id = s.plan_id
+        ORDER BY s.created_at DESC
+    `).all();
+}
+
+// ── Password Reset Tokens ─────────────────────────────────────────────────────
+
+function storeResetToken(tenantId, tokenHash, expiresAt) {
+    const db = getSuperDb();
+    db.prepare(`DELETE FROM password_reset_tokens WHERE tenant_id = ?`).run(tenantId);
+    db.prepare(`
+        INSERT INTO password_reset_tokens (tenant_id, token_hash, expires_at)
+        VALUES (?, ?, ?)
+    `).run(tenantId, tokenHash, expiresAt);
+}
+
+function getValidResetToken(tokenHash) {
+    const db = getSuperDb();
+    return db.prepare(`
+        SELECT * FROM password_reset_tokens
+        WHERE token_hash = ? AND used = 0 AND expires_at > datetime('now')
+    `).get(tokenHash);
+}
+
+function markResetTokenUsed(tokenHash) {
+    const db = getSuperDb();
+    db.prepare(`UPDATE password_reset_tokens SET used = 1 WHERE token_hash = ?`).run(tokenHash);
+}
+
 module.exports = {
     getSuperDb,
     markWebhookVerified,
@@ -551,4 +703,15 @@ module.exports = {
     getWebhookConfig,
     upsertWebhookConfig,
     clearWebhookChannel,
+    getAllPlans,
+    getActivePlans,
+    getPlanById,
+    createPlan,
+    updatePlan,
+    deletePlan,
+    createSubscription,
+    getSubscriptions,
+    storeResetToken,
+    getValidResetToken,
+    markResetTokenUsed,
 };
