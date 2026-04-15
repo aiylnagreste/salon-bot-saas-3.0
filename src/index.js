@@ -96,6 +96,8 @@ const NO_SHOW_SCAN_MS = 15 * 60 * 1000; // every 15 min
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Raw body needed for Stripe webhook signature verification — MUST be before express.json()
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -642,6 +644,145 @@ app.post("/salon-admin/reset-request", (req, res) => {
     };
   }
   res.json({ ok: true });
+});
+
+// ── Public — Plan listing for registration page ────────────────────────────────
+
+app.get("/api/public/plans", (_req, res) => {
+    try {
+        const plans = getActivePlans();
+        const safe = plans.map(p => ({
+            id: p.id, name: p.name, description: p.description,
+            price_cents: p.price_cents, billing_cycle: p.billing_cycle,
+            max_services: p.max_services, whatsapp_access: p.whatsapp_access,
+            instagram_access: p.instagram_access, facebook_access: p.facebook_access,
+            ai_calls_access: p.ai_calls_access,
+        }));
+        res.json(safe);
+    } catch (err) {
+        logger.error('[public plans]', err.message);
+        res.status(500).json({ error: 'Failed to load plans' });
+    }
+});
+
+// ── Public — Stripe Checkout registration ─────────────────────────────────────
+
+app.post("/api/register", async (req, res) => {
+    const { owner_name, salon_name, email, phone, plan_id } = req.body;
+    if (!owner_name || !salon_name || !email || !phone || !plan_id)
+        return res.status(400).json({ error: 'owner_name, salon_name, email, phone, plan_id are required' });
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+        return res.status(400).json({ error: 'Invalid email address' });
+
+    const superDb = getSuperDb();
+    const existing = superDb.prepare("SELECT id FROM salon_tenants WHERE email = ?").get(email);
+    if (existing) return res.status(409).json({ error: 'An account with this email already exists' });
+
+    const plan = getPlanById(parseInt(plan_id, 10));
+    if (!plan || !plan.is_active)
+        return res.status(404).json({ error: 'Plan not found or inactive' });
+
+    // Free plan — create tenant directly
+    if (plan.price_cents === 0) {
+        try {
+            const crypto = require('crypto');
+            const generatedPassword = crypto.randomBytes(8).toString('hex');
+            const tenantId = await createTenant(owner_name, salon_name, email, phone, generatedPassword);
+            createSubscription(tenantId, plan.id, null, null, null, null);
+            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+            sendWelcomeEmail({
+                to: email, ownerName: owner_name, salonName: salon_name,
+                email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
+            }).catch(err => logger.warn('[welcome email free plan]', err.message));
+            return res.json({ ok: true, redirect: `${frontendUrl}/login?registered=1` });
+        } catch (err) {
+            logger.error('[free register]', err.message);
+            return res.status(500).json({ error: 'Registration failed' });
+        }
+    }
+
+    // Paid plan
+    if (!plan.stripe_price_id)
+        return res.status(400).json({ error: 'This plan is not yet available for purchase. Please contact support.' });
+
+    try {
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+        const session = await createCheckoutSession({
+            planId: plan.id,
+            stripePriceId: plan.stripe_price_id,
+            email, ownerName: owner_name, salonName: salon_name, phone,
+            successUrl: `${frontendUrl}/register/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancelUrl: `${frontendUrl}/register?cancelled=1`,
+        });
+        res.json({ checkout_url: session.url });
+    } catch (err) {
+        logger.error('[stripe checkout]', err.message);
+        res.status(500).json({ error: 'Payment initiation failed. Please try again.' });
+    }
+});
+
+// ── Stripe Webhook ─────────────────────────────────────────────────────────────
+
+app.post("/api/stripe/webhook", async (req, res) => {
+    const signature = req.headers['stripe-signature'];
+    if (!signature)
+        return res.status(400).json({ error: 'Missing stripe-signature header' });
+
+    let event;
+    try {
+        event = constructWebhookEvent(req.body, signature);
+    } catch (err) {
+        logger.error('[stripe webhook] signature verification failed:', err.message);
+        return res.status(400).json({ error: `Webhook error: ${err.message}` });
+    }
+
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        const meta = session.metadata || {};
+        const email = session.customer_email || meta.email;
+        const { owner_name, salon_name, phone, plan_id } = meta;
+
+        if (!email || !owner_name || !salon_name) {
+            logger.warn('[stripe webhook] missing metadata in session:', session.id);
+            return res.json({ received: true });
+        }
+
+        // Idempotency: skip if tenant already exists
+        const superDb = getSuperDb();
+        const existing = superDb.prepare("SELECT id FROM salon_tenants WHERE email = ?").get(email);
+        if (existing) {
+            logger.info(`[stripe webhook] tenant already exists for ${email}, skipping`);
+            return res.json({ received: true });
+        }
+
+        // Create tenant and send welcome email (non-blocking — always return 200)
+        setImmediate(async () => {
+            try {
+                const crypto = require('crypto');
+                const generatedPassword = crypto.randomBytes(8).toString('hex');
+                const tenantId = await createTenant(owner_name, salon_name, email, phone || '', generatedPassword);
+
+                const planIdNum = parseInt(plan_id || '0', 10);
+                if (planIdNum) {
+                    createSubscription(tenantId, planIdNum, session.subscription || null,
+                        session.customer || null, null, null);
+                }
+
+                const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+                await sendWelcomeEmail({
+                    to: email, ownerName: owner_name, salonName: salon_name,
+                    email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
+                });
+
+                logger.info(`[stripe webhook] tenant ${tenantId} created for ${email}`);
+            } catch (err) {
+                logger.error('[stripe webhook] tenant creation error:', err.message);
+            }
+        });
+    }
+
+    res.json({ received: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
