@@ -621,30 +621,69 @@ app.get("/salon-data.json", (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Password Reset Requests (in-memory store, cleared on redeploy — MVP)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Tenant Auth — Forgot / Reset Password ─────────────────────────────────────
 
-// resetRequests[tenantId] = { email, salonName, requestedAt }
-const resetRequests = {};
+app.post("/tenant/forgot-password", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
 
-// Public: salon admin submits "forgot password" request
-app.post("/salon-admin/reset-request", (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: "email required" });
+    // Always return 200 immediately — don't leak whether email exists
+    res.json({ ok: true });
 
-  const superDb = getSuperDb();
-  const tenant = superDb.prepare("SELECT * FROM salon_tenants WHERE email = ? AND status = 'active'").get(email);
-  // Always return 200 to avoid leaking whether the email exists
-  if (tenant) {
-    resetRequests[tenant.tenant_id] = {
-      tenantId: tenant.tenant_id,
-      email: tenant.email,
-      salonName: tenant.salon_name,
-      ownerName: tenant.owner_name,
-      requestedAt: new Date().toISOString(),
-    };
-  }
-  res.json({ ok: true });
+    setImmediate(async () => {
+        try {
+            const superDb = getSuperDb();
+            const tenant = superDb.prepare(
+                "SELECT * FROM salon_tenants WHERE email = ? AND status = 'active'"
+            ).get(email);
+            if (!tenant) return;
+
+            const rawToken = crypto.randomBytes(32).toString('hex');
+            const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+            // 5-minute expiry
+            const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
+                .toISOString().replace('T', ' ').slice(0, 19);
+
+            storeResetToken(tenant.tenant_id, tokenHash, expiresAt);
+
+            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+            const resetUrl = `${frontendUrl}/reset-password?token=${rawToken}`;
+
+            await sendPasswordResetEmail({
+                to: tenant.email,
+                ownerName: tenant.owner_name,
+                resetUrl,
+            });
+            logger.info(`[forgot-password] reset email sent to ${email}`);
+        } catch (err) {
+            logger.error('[forgot-password]', err.message);
+        }
+    });
+});
+
+app.post("/tenant/reset-password", async (req, res) => {
+    const { token, new_password } = req.body;
+    if (!token || !new_password)
+        return res.status(400).json({ error: 'token and new_password are required' });
+    if (new_password.length < 8)
+        return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+    try {
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const record = getValidResetToken(tokenHash);
+
+        if (!record) {
+            return res.status(400).json({ error: 'Reset link is invalid or has expired. Please request a new one.' });
+        }
+
+        updateTenantPassword(record.tenant_id, new_password);
+        markResetTokenUsed(tokenHash);
+
+        res.json({ ok: true, message: 'Password reset successfully. You can now log in.' });
+    } catch (err) {
+        logger.error('[reset-password]', err.message);
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
 });
 
 // ── Public — Plan listing for registration page ────────────────────────────────
@@ -2228,10 +2267,11 @@ app.post("/super-admin/api/settings", requireSuperAdminAuth, (req, res) => {
 
 // List pending password-reset requests
 app.get("/super-admin/api/reset-requests", requireSuperAdminAuth, (_req, res) => {
-  res.json(Object.values(resetRequests));
+    // Deprecated — reset requests are now handled via email tokens
+    res.json([]);
 });
 
-// Super admin sets a new password for a tenant (also clears the reset request)
+// Super admin sets a new password for a tenant
 app.post("/super-admin/api/tenants/:tenantId/set-password", requireSuperAdminAuth, (req, res) => {
   const { tenantId } = req.params;
   const { newPassword } = req.body;
@@ -2240,7 +2280,6 @@ app.post("/super-admin/api/tenants/:tenantId/set-password", requireSuperAdminAut
 
   try {
     updateTenantPassword(tenantId, newPassword);
-    delete resetRequests[tenantId];
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
