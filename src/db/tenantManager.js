@@ -190,6 +190,7 @@ function getSuperDb() {
     if (!superDb) {
         superDb = new Database(SUPER_DB_PATH);
         superDb.pragma('journal_mode = WAL');
+        superDb.pragma('foreign_keys = ON');
         initSuperSchema();
     }
     return superDb;
@@ -642,12 +643,13 @@ function deletePlan(planId) {
 
 function createSubscription(tenantId, planId, stripeSubId, stripeCustomerId, periodStart, periodEnd) {
     const db = getSuperDb();
-    db.prepare(`
+    const result = db.prepare(`
         INSERT INTO subscriptions (tenant_id, plan_id, stripe_subscription_id, stripe_customer_id,
             status, current_period_start, current_period_end)
         VALUES (?, ?, ?, ?, 'active', ?, ?)
     `).run(tenantId, planId, stripeSubId || null, stripeCustomerId || null,
            periodStart || null, periodEnd || null);
+    return db.prepare(`SELECT * FROM subscriptions WHERE id = ?`).get(result.lastInsertRowid);
 }
 
 function getSubscriptions() {
@@ -665,11 +667,13 @@ function getSubscriptions() {
 
 function storeResetToken(tenantId, tokenHash, expiresAt) {
     const db = getSuperDb();
-    db.prepare(`DELETE FROM password_reset_tokens WHERE tenant_id = ?`).run(tenantId);
-    db.prepare(`
-        INSERT INTO password_reset_tokens (tenant_id, token_hash, expires_at)
-        VALUES (?, ?, ?)
-    `).run(tenantId, tokenHash, expiresAt);
+    db.transaction(() => {
+        db.prepare(`DELETE FROM password_reset_tokens WHERE tenant_id = ?`).run(tenantId);
+        db.prepare(`
+            INSERT INTO password_reset_tokens (tenant_id, token_hash, expires_at)
+            VALUES (?, ?, ?)
+        `).run(tenantId, tokenHash, expiresAt);
+    })();
 }
 
 function getValidResetToken(tokenHash) {
