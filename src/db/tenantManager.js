@@ -469,7 +469,16 @@ function getTenantById(tenantId) {
 
 function getAllTenants() {
     const db = getSuperDb();
-    return db.prepare(`SELECT id, tenant_id, owner_name, salon_name, email, phone, status, subscription_plan, subscription_expires, created_at FROM salon_tenants ORDER BY created_at DESC`).all();
+    return db.prepare(`
+        SELECT st.id, st.tenant_id, st.owner_name, st.salon_name, st.email, st.phone, st.status,
+               COALESCE(p.name, st.subscription_plan) AS subscription_plan,
+               COALESCE(s.current_period_end, st.subscription_expires) AS subscription_expires,
+               st.created_at
+        FROM salon_tenants st
+        LEFT JOIN subscriptions s ON s.tenant_id = st.tenant_id AND s.status = 'active'
+        LEFT JOIN plans p ON p.id = s.plan_id
+        ORDER BY st.created_at DESC
+    `).all();
 }
 
 function updateTenantStatus(tenantId, status) {
@@ -639,6 +648,11 @@ function deletePlan(planId) {
     db.prepare(`UPDATE plans SET is_active = 0, updated_at = datetime('now') WHERE id = ?`).run(planId);
 }
 
+function hardDeletePlan(planId) {
+    const db = getSuperDb();
+    db.prepare(`DELETE FROM plans WHERE id = ?`).run(planId);
+}
+
 // ── Subscriptions ─────────────────────────────────────────────────────────────
 
 function createSubscription(tenantId, planId, stripeSubId, stripeCustomerId, periodStart, periodEnd) {
@@ -649,6 +663,17 @@ function createSubscription(tenantId, planId, stripeSubId, stripeCustomerId, per
         VALUES (?, ?, ?, ?, 'active', ?, ?)
     `).run(tenantId, planId, stripeSubId || null, stripeCustomerId || null,
            periodStart || null, periodEnd || null);
+
+    // Keep salon_tenants denormalized columns in sync
+    const plan = db.prepare(`SELECT name FROM plans WHERE id = ?`).get(planId);
+    if (plan) {
+        db.prepare(`
+            UPDATE salon_tenants
+            SET subscription_plan = ?, subscription_expires = ?, updated_at = datetime('now')
+            WHERE tenant_id = ?
+        `).run(plan.name, periodEnd || null, tenantId);
+    }
+
     return db.prepare(`SELECT * FROM subscriptions WHERE id = ?`).get(result.lastInsertRowid);
 }
 
@@ -715,6 +740,7 @@ module.exports = {
     createPlan,
     updatePlan,
     deletePlan,
+    hardDeletePlan,
     createSubscription,
     getSubscriptions,
     storeResetToken,

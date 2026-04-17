@@ -38,6 +38,7 @@ const {
   createPlan,
   updatePlan,
   deletePlan,
+  hardDeletePlan,
   createSubscription,
   getSubscriptions,
   storeResetToken,
@@ -2318,7 +2319,8 @@ app.get("/super-admin/api/plans", requireSuperAdminAuth, (_req, res) => {
 
 app.post("/super-admin/api/plans", requireSuperAdminAuth, (req, res) => {
     const { name, description, price_cents, billing_cycle, max_services,
-            whatsapp_access, instagram_access, facebook_access, ai_calls_access } = req.body;
+            whatsapp_access, instagram_access, facebook_access, ai_calls_access,
+            stripe_price_id } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (price_cents === undefined || price_cents === null)
         return res.status(400).json({ error: 'price_cents is required' });
@@ -2335,6 +2337,7 @@ app.post("/super-admin/api/plans", requireSuperAdminAuth, (req, res) => {
             instagram_access: !!instagram_access,
             facebook_access: !!facebook_access,
             ai_calls_access: !!ai_calls_access,
+            stripe_price_id: stripe_price_id || null,
         });
         res.status(201).json(plan);
     } catch (err) {
@@ -2375,6 +2378,20 @@ app.delete("/super-admin/api/plans/:planId", requireSuperAdminAuth, (req, res) =
     } catch (err) {
         logger.error('[plan delete]', err.message);
         res.status(500).json({ error: 'Failed to delete plan' });
+    }
+});
+
+app.delete("/super-admin/api/plans/:planId/permanent", requireSuperAdminAuth, (req, res) => {
+    const planId = parseInt(req.params.planId, 10);
+    if (isNaN(planId)) return res.status(400).json({ error: 'planId must be a number' });
+    const plan = getPlanById(planId);
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    try {
+        hardDeletePlan(planId);
+        res.json({ ok: true });
+    } catch (err) {
+        logger.error('[plan hard delete]', err.message);
+        res.status(500).json({ error: 'Failed to delete plan permanently' });
     }
 });
 

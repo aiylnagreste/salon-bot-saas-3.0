@@ -22,7 +22,7 @@ This keeps cookies same-origin and avoids CORS entirely.
 
 **The only env var needed to wire them together:**
 ```
-BACKEND_URL=https://your-app.railway.app   ← set on Vercel
+BACKEND_URL=https://salon-bot-saas-30-production.up.railway.app/  ← set on Vercel
 ```
 
 ## Key Env Vars
