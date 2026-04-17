@@ -29,7 +29,8 @@
       "Bash(npx tsc *)",
       "Bash(node -e \"const l = require\\('lucide-react'\\); console.log\\(Object.keys\\(l\\).filter\\(k => /gram|book|chat|message/i.test\\(k\\)\\).join\\('\\\\n'\\)\\)\")",
       "Bash(echo \"EXIT_CODE: $?\")",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(node -e \"const {ShieldHalf} = require\\('lucide-react'\\); console.log\\(typeof ShieldHalf\\);\")"
     ],
     "additionalDirectories": [
       "d:\\vs self code\\frontend\\app\\api\\super-admin",
