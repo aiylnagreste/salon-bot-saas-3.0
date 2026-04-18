@@ -700,6 +700,69 @@ function getTenantSubscription(tenantId) {
     `).get(tenantId) || null;
 }
 
+// ── Subscription updates (SUB-01, SUB-02, SUB-03) ─────────────────────────────
+
+function updateSubscription(stripeSubscriptionId, { planId, status, currentPeriodStart, currentPeriodEnd } = {}) {
+    const db = getSuperDb();
+    db.transaction(() => {
+        const fields = [];
+        const values = [];
+        if (planId !== undefined) { fields.push('plan_id = ?'); values.push(planId); }
+        if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+        if (currentPeriodStart !== undefined) { fields.push('current_period_start = ?'); values.push(currentPeriodStart); }
+        if (currentPeriodEnd !== undefined) { fields.push('current_period_end = ?'); values.push(currentPeriodEnd); }
+        if (!fields.length) return;
+        fields.push("updated_at = datetime('now')");
+        values.push(stripeSubscriptionId);
+        db.prepare(`UPDATE subscriptions SET ${fields.join(', ')} WHERE stripe_subscription_id = ?`).run(...values);
+
+        // Keep salon_tenants denormalized columns in sync
+        const row = db.prepare('SELECT tenant_id, plan_id FROM subscriptions WHERE stripe_subscription_id = ?').get(stripeSubscriptionId);
+        if (row) {
+            const planRow = db.prepare('SELECT name FROM plans WHERE id = ?').get(planId !== undefined ? planId : row.plan_id);
+            const setParts = [];
+            const setValues = [];
+            if (currentPeriodEnd !== undefined) { setParts.push('subscription_expires = ?'); setValues.push(currentPeriodEnd); }
+            if (planRow && planId !== undefined) { setParts.push('subscription_plan = ?'); setValues.push(planRow.name); }
+            if (setParts.length) {
+                setParts.push("updated_at = datetime('now')");
+                setValues.push(row.tenant_id);
+                db.prepare(`UPDATE salon_tenants SET ${setParts.join(', ')} WHERE tenant_id = ?`).run(...setValues);
+            }
+        }
+    })();
+}
+
+function cancelSubscription(stripeSubscriptionId, cancellationDate) {
+    const db = getSuperDb();
+    db.transaction(() => {
+        db.prepare(`UPDATE subscriptions SET status = 'canceled', updated_at = datetime('now') WHERE stripe_subscription_id = ?`).run(stripeSubscriptionId);
+        const row = db.prepare('SELECT tenant_id FROM subscriptions WHERE stripe_subscription_id = ?').get(stripeSubscriptionId);
+        if (row) {
+            db.prepare(`UPDATE salon_tenants SET subscription_expires = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(cancellationDate, row.tenant_id);
+        }
+    })();
+}
+
+function setTenantPlanOverride(tenantId, planId, expiresAt) {
+    const db = getSuperDb();
+    db.transaction(() => {
+        const plan = db.prepare('SELECT name FROM plans WHERE id = ?').get(planId);
+        if (!plan) throw new Error(`Plan ${planId} not found`);
+
+        // Update existing active subscription row, or insert one
+        const existing = db.prepare('SELECT id FROM subscriptions WHERE tenant_id = ? AND status = ?').get(tenantId, 'active');
+        if (existing) {
+            db.prepare(`UPDATE subscriptions SET plan_id = ?, current_period_end = ?, updated_at = datetime('now') WHERE id = ?`).run(planId, expiresAt, existing.id);
+        } else {
+            db.prepare(`INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_end) VALUES (?, ?, 'active', ?)`).run(tenantId, planId, expiresAt);
+        }
+
+        // Sync denormalized columns on salon_tenants
+        db.prepare(`UPDATE salon_tenants SET subscription_plan = ?, subscription_expires = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(plan.name, expiresAt, tenantId);
+    })();
+}
+
 // ── Password Reset Tokens ─────────────────────────────────────────────────────
 
 function storeResetToken(tenantId, tokenHash, expiresAt) {
@@ -761,6 +824,9 @@ module.exports = {
     deletePlan,
     hardDeletePlan,
     createSubscription,
+    updateSubscription,
+    cancelSubscription,
+    setTenantPlanOverride,
     getSubscriptions,
     storeResetToken,
     getValidResetToken,
