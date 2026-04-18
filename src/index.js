@@ -66,7 +66,7 @@ const { handleFacebook, verifyFacebook } = require("./handlers/facebook");
 const { routeMessage } = require("./core/router");
 
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('./services/emailService');
-const { createCheckoutSession, constructWebhookEvent } = require('./services/stripeService');
+const { createCheckoutSession, constructWebhookEvent, retrieveSubscription } = require('./services/stripeService');
 
 // ── JWT secret — REQUIRED in production ──────────────────────────────────────
 const JWT_SECRET = process.env.TENANT_JWT_SECRET;
@@ -807,30 +807,60 @@ app.post("/api/stripe/webhook", async (req, res) => {
             return res.json({ received: true });
         }
 
-        // Create tenant and send welcome email (non-blocking — always return 200)
-        setImmediate(async () => {
+        // Extract period dates — webhook payloads never expand nested objects,
+        // so session.subscription is always a string ID here regardless of the
+        // expand:['subscription'] flag on checkout session create.
+        let _periodStart = null;
+        let _periodEnd = null;
+        const subId = typeof session.subscription === 'object'
+            ? (session.subscription && session.subscription.id)
+            : session.subscription;
+        if (subId) {
             try {
-                const generatedPassword = crypto.randomBytes(8).toString('hex');
-                const tenantId = await createTenant(owner_name, salon_name, email, phone || '', generatedPassword);
-
-                const planIdNum = parseInt(plan_id || '0', 10);
-                if (planIdNum) {
-                    createSubscription(tenantId, planIdNum, session.subscription || null,
-                        session.customer || null, null, null);
-                } else {
-                    logger.warn(`[stripe webhook] no valid plan_id in metadata for session ${session.id}, subscription not created`);
-                }
-                const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
-                await sendWelcomeEmail({
-                    to: email, ownerName: owner_name, salonName: salon_name,
-                    email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
-                });
-
-                logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} with plan ${planIdNum}`);
-            } catch (err) {
-              logger.error(`[stripe webhook] tenant creation error : ` , err.message);
+                const stripeSub = await retrieveSubscription(subId);
+                _periodStart = toIso(stripeSub.current_period_start);
+                _periodEnd = toIso(stripeSub.current_period_end);
+                logger.info(`[stripe webhook] subscription period: ${_periodStart} → ${_periodEnd}`);
+            } catch (subErr) {
+                logger.error(`[stripe webhook] failed to retrieve subscription ${subId}: ${subErr.message}`);
             }
-        });
+        } else {
+            logger.warn(`[stripe webhook] checkout.session.completed has no subscription ID`, session.id);
+        }
+
+        // Create tenant + subscription row synchronously so the row exists before we return 200.
+        // This prevents the subscription.created race: if that event fires while setImmediate is
+        // pending the DB row doesn't exist yet, so it logs a warning and skips the date update.
+        const planIdNum = parseInt(plan_id || '0', 10);
+        let tenantId, generatedPassword;
+        try {
+            generatedPassword = crypto.randomBytes(8).toString('hex');
+            tenantId = await createTenant(owner_name, salon_name, email, phone || '', generatedPassword);
+            if (planIdNum) {
+                createSubscription(tenantId, planIdNum, subId || null,
+                    session.customer || null, _periodStart, _periodEnd);
+            } else {
+                logger.warn(`[stripe webhook] no valid plan_id in metadata for session ${session.id}, subscription not created`);
+            }
+            logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} with plan ${planIdNum}`);
+        } catch (err) {
+            logger.error(`[stripe webhook] tenant creation error:`, err.message);
+        }
+
+        // Defer only the email — slow, non-critical, safe to run after 200
+        if (tenantId && generatedPassword) {
+            setImmediate(async () => {
+                try {
+                    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+                    await sendWelcomeEmail({
+                        to: email, ownerName: owner_name, salonName: salon_name,
+                        email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
+                    });
+                } catch (err) {
+                    logger.error(`[stripe webhook] welcome email error:`, err.message);
+                }
+            });
+        }
     }
     else if (event.type === 'customer.subscription.created') {
         const sub = event.data.object;
@@ -2303,13 +2333,29 @@ app.get("/super-admin/api/tenants", requireSuperAdminAuth, (_req, res) => {
 });
 
 app.post("/super-admin/api/tenants", requireSuperAdminAuth, async (req, res) => {
-  const { owner_name, salon_name, email, phone, password } = req.body;
+  const { owner_name, salon_name, email, phone, password, plan_id } = req.body;
   if (!owner_name || !salon_name || !email || !phone)
     return res.status(400).json({ error: "Missing required fields" });
   try {
     const generatedPassword = password || Math.random().toString(36).slice(-8);
     const tenantId = await createTenant(owner_name, salon_name, email, phone, generatedPassword);
-    // Pre-warm cache for the new tenant
+
+    if (plan_id) {
+      const planIdNum = parseInt(plan_id, 10);
+      const plan = getPlanById(planIdNum);
+      if (plan) {
+        const now = new Date();
+        const periodStart = now.toISOString();
+        let periodEnd = null;
+        if (plan.billing_cycle === 'monthly') {
+          const end = new Date(now); end.setMonth(end.getMonth() + 1); periodEnd = end.toISOString();
+        } else if (plan.billing_cycle === 'yearly') {
+          const end = new Date(now); end.setFullYear(end.getFullYear() + 1); periodEnd = end.toISOString();
+        }
+        createSubscription(tenantId, planIdNum, null, null, periodStart, periodEnd);
+      }
+    }
+
     await initCache(tenantId).catch((e) => logger.warn("[cache] new tenant init:", e.message));
     res.json({ success: true, tenant_id: tenantId, password: generatedPassword });
   } catch (err) {
@@ -2331,25 +2377,19 @@ app.patch("/super-admin/api/tenants/:tenantId/status", requireSuperAdminAuth, (r
 
 app.patch("/super-admin/api/tenants/:tenantId/plan", requireSuperAdminAuth, (req, res) => {
     const { tenantId } = req.params;
-    const { plan_id, expires_at } = req.body || {};
+    const { plan_id } = req.body || {};
 
-    if (!plan_id || !expires_at) {
-        return res.status(400).json({ ok: false, error: 'plan_id and expires_at are required' });
+    if (!plan_id) {
+        return res.status(400).json({ ok: false, error: 'plan_id is required' });
     }
     const planIdNum = parseInt(plan_id, 10);
     if (Number.isNaN(planIdNum) || planIdNum <= 0) {
         return res.status(400).json({ ok: false, error: 'plan_id must be a positive integer' });
     }
 
-    // Normalize expires_at: 'YYYY-MM-DD' -> 'YYYY-MM-DDT00:00:00.000Z'
-    let expiresIso = String(expires_at);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(expiresIso)) {
-        expiresIso = `${expiresIso}T00:00:00.000Z`;
-    }
-
     try {
-        setTenantPlanOverride(tenantId, planIdNum, expiresIso);
-        logger.info(`[admin plan override] tenant=${tenantId} plan=${planIdNum} expires=${expiresIso}`);
+        setTenantPlanOverride(tenantId, planIdNum);
+        logger.info(`[admin plan override] tenant=${tenantId} plan=${planIdNum}`);
         res.json({ ok: true });
     } catch (err) {
         logger.error('[admin plan override]', err.message);

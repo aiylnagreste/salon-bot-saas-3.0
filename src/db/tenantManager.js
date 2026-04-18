@@ -657,21 +657,35 @@ function hardDeletePlan(planId) {
 
 function createSubscription(tenantId, planId, stripeSubId, stripeCustomerId, periodStart, periodEnd) {
     const db = getSuperDb();
+    const plan = db.prepare(`SELECT name, billing_cycle FROM plans WHERE id = ?`).get(planId);
+
+    // Derive period dates from plan billing cycle if not supplied by caller
+    if (!periodStart || !periodEnd) {
+        const now = new Date();
+        periodStart = periodStart || now.toISOString();
+        if (plan) {
+            const end = new Date(now);
+            if (plan.billing_cycle === 'yearly') {
+                end.setFullYear(end.getFullYear() + 1);
+            } else {
+                end.setMonth(end.getMonth() + 1);
+            }
+            periodEnd = end.toISOString();
+        }
+    }
+
     const result = db.prepare(`
         INSERT INTO subscriptions (tenant_id, plan_id, stripe_subscription_id, stripe_customer_id,
             status, current_period_start, current_period_end)
         VALUES (?, ?, ?, ?, 'active', ?, ?)
-    `).run(tenantId, planId, stripeSubId || null, stripeCustomerId || null,
-           periodStart || null, periodEnd || null);
+    `).run(tenantId, planId, stripeSubId || null, stripeCustomerId || null, periodStart, periodEnd);
 
-    // Keep salon_tenants denormalized columns in sync
-    const plan = db.prepare(`SELECT name FROM plans WHERE id = ?`).get(planId);
     if (plan) {
         db.prepare(`
             UPDATE salon_tenants
             SET subscription_plan = ?, subscription_expires = ?, updated_at = datetime('now')
             WHERE tenant_id = ?
-        `).run(plan.name, periodEnd || null, tenantId);
+        `).run(plan.name, periodEnd, tenantId);
     }
 
     return db.prepare(`SELECT * FROM subscriptions WHERE id = ?`).get(result.lastInsertRowid);
@@ -744,22 +758,33 @@ function cancelSubscription(stripeSubscriptionId, cancellationDate) {
     })();
 }
 
-function setTenantPlanOverride(tenantId, planId, expiresAt) {
+function setTenantPlanOverride(tenantId, planId) {
     const db = getSuperDb();
     db.transaction(() => {
-        const plan = db.prepare('SELECT name FROM plans WHERE id = ?').get(planId);
+        const plan = db.prepare('SELECT name, billing_cycle FROM plans WHERE id = ?').get(planId);
         if (!plan) throw new Error(`Plan ${planId} not found`);
 
-        // Update existing active subscription row, or insert one
-        const existing = db.prepare('SELECT id FROM subscriptions WHERE tenant_id = ? AND status = ?').get(tenantId, 'active');
-        if (existing) {
-            db.prepare(`UPDATE subscriptions SET plan_id = ?, current_period_end = ?, updated_at = datetime('now') WHERE id = ?`).run(planId, expiresAt, existing.id);
-        } else {
-            db.prepare(`INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_end) VALUES (?, ?, 'active', ?)`).run(tenantId, planId, expiresAt);
+        const now = new Date();
+        const periodStart = now.toISOString();
+        let periodEnd = null;
+        if (plan.billing_cycle === 'monthly') {
+            const end = new Date(now);
+            end.setMonth(end.getMonth() + 1);
+            periodEnd = end.toISOString();
+        } else if (plan.billing_cycle === 'yearly') {
+            const end = new Date(now);
+            end.setFullYear(end.getFullYear() + 1);
+            periodEnd = end.toISOString();
         }
 
-        // Sync denormalized columns on salon_tenants
-        db.prepare(`UPDATE salon_tenants SET subscription_plan = ?, subscription_expires = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(plan.name, expiresAt, tenantId);
+        const existing = db.prepare('SELECT id FROM subscriptions WHERE tenant_id = ? AND status = ?').get(tenantId, 'active');
+        if (existing) {
+            db.prepare(`UPDATE subscriptions SET plan_id = ?, current_period_start = ?, current_period_end = ?, updated_at = datetime('now') WHERE id = ?`).run(planId, periodStart, periodEnd, existing.id);
+        } else {
+            db.prepare(`INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_start, current_period_end) VALUES (?, ?, 'active', ?, ?)`).run(tenantId, planId, periodStart, periodEnd);
+        }
+
+        db.prepare(`UPDATE salon_tenants SET subscription_plan = ?, subscription_expires = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(plan.name, periodEnd, tenantId);
     })();
 }
 

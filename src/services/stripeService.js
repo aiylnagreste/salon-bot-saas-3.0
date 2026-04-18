@@ -21,6 +21,7 @@ async function createCheckoutSession({ planId, stripePriceId, email, ownerName, 
     const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         payment_method_types: ['card'],
+        expand: ['subscription'],
         customer_email: email,
         line_items: [{ price: stripePriceId, quantity: 1 }],
         success_url: successUrl,
@@ -57,4 +58,8 @@ function constructWebhookEvent(payload, signature) {
     );
 }
 
-module.exports = { createCheckoutSession, constructWebhookEvent };
+async function retrieveSubscription(subscriptionId) {
+    return getStripe().subscriptions.retrieve(subscriptionId);
+}
+
+module.exports = { createCheckoutSession, constructWebhookEvent, retrieveSubscription };

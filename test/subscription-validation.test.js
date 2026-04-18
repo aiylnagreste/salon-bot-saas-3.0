@@ -89,10 +89,10 @@ describe('Subscription Validation - Period Dates', () => {
             );
 
             const tenant = tenantManager.getTenantById(testTenantId);
-            
+
             assert.notEqual(
-                tenant.subscription_expires, 
-                null, 
+                tenant.subscription_expires,
+                null,
                 'ISSUE #1: subscription_expires should NOT be null in salon_tenants'
             );
             assert.ok(
@@ -129,7 +129,7 @@ describe('Subscription Validation - Period Dates', () => {
             // Create first subscription
             const end1 = new Date();
             end1.setMonth(end1.getMonth() + 1);
-            
+
             tenantManager.createSubscription(
                 testTenantId,
                 testPlanId,
@@ -145,7 +145,7 @@ describe('Subscription Validation - Period Dates', () => {
             // Create second subscription with later end date
             const end2 = new Date();
             end2.setMonth(end2.getMonth() + 3);
-            
+
             tenantManager.createSubscription(
                 testTenantId,
                 testPlanId,
@@ -271,7 +271,7 @@ describe('Subscription Validation - Period Dates', () => {
         test('expired subscriptions retain period dates', () => {
             const startDate = new Date();
             startDate.setMonth(startDate.getMonth() - 2);
-            
+
             const endDate = new Date();
             endDate.setMonth(endDate.getMonth() - 1);
 
@@ -292,7 +292,7 @@ describe('Subscription Validation - Period Dates', () => {
                 subscription.current_period_end,
                 'Expired subscription should retain current_period_end'
             );
-            
+
             // Verify end date is in the past
             const now = new Date();
             const end = new Date(subscription.current_period_end);
