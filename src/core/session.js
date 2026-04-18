@@ -19,6 +19,9 @@ function getSession(userId, tenantId) {
 }
 
 function setSession(userId, tenantId, newData) {
+  if (userId === undefined || userId === null) throw new Error('setSession: userId must not be null/undefined');
+  if (tenantId === undefined || tenantId === null) throw new Error('setSession: tenantId must not be null/undefined');
+
   if (!sessions.has(tenantId)) {
     sessions.set(tenantId, new Map());
   }
@@ -48,10 +51,13 @@ function isSessionExpired(session, minutes = 10) {
 // Prune expired sessions every 5 minutes
 setInterval(() => {
   const now = Date.now();
-  for (const [userId, entry] of sessions.entries()) {
-    if (now - entry.updatedAt > SESSION_TTL_MS) {
-      sessions.delete(userId);
+  for (const [tenantId, tenantSessions] of sessions.entries()) {
+    for (const [userId, entry] of tenantSessions.entries()) {
+      if (now - entry.updatedAt > SESSION_TTL_MS) {
+        tenantSessions.delete(userId);
+      }
     }
+    if (tenantSessions.size === 0) sessions.delete(tenantId);
   }
 }, 5 * 60 * 1000);
 

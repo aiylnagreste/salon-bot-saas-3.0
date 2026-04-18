@@ -527,7 +527,7 @@ function setTenantSetting(tenantId, key, value) {
 function isTenantActive(tenantId) {
     const db = getSuperDb();
     const tenant = db.prepare('SELECT status FROM salon_tenants WHERE tenant_id = ?').get(tenantId);
-    return tenant && tenant.status === 'active';
+    return tenant ? tenant.status === 'active' : false;
 }
 
 // ── Per-tenant webhook config ─────────────────────────────────────────────────
@@ -688,6 +688,18 @@ function getSubscriptions() {
     `).all();
 }
 
+function getTenantSubscription(tenantId) {
+    const db = getSuperDb();
+    return db.prepare(`
+        SELECT s.*, p.name as plan_name, p.max_services, p.whatsapp_access,
+               p.instagram_access, p.facebook_access, p.ai_calls_access
+        FROM subscriptions s
+        JOIN plans p ON p.id = s.plan_id
+        WHERE s.tenant_id = ? AND s.status = 'active'
+        ORDER BY s.created_at DESC LIMIT 1
+    `).get(tenantId) || null;
+}
+
 // ── Password Reset Tokens ─────────────────────────────────────────────────────
 
 function storeResetToken(tenantId, tokenHash, expiresAt) {
@@ -714,6 +726,13 @@ function getValidResetToken(tokenHash) {
 function markResetTokenUsed(tokenHash) {
     const db = getSuperDb();
     db.prepare(`UPDATE password_reset_tokens SET used = 1 WHERE token_hash = ?`).run(tokenHash);
+}
+
+function closeConnections() {
+    if (superDb) {
+        superDb.close();
+        superDb = null;
+    }
 }
 
 module.exports = {
@@ -746,4 +765,6 @@ module.exports = {
     storeResetToken,
     getValidResetToken,
     markResetTokenUsed,
+    getTenantSubscription,
+    closeConnections,
 };

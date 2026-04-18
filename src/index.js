@@ -44,6 +44,7 @@ const {
   storeResetToken,
   getValidResetToken,
   markResetTokenUsed,
+  getTenantSubscription,
 } = require("./db/tenantManager");
 
 // Auth middleware
@@ -814,16 +815,16 @@ app.post("/api/stripe/webhook", async (req, res) => {
                 } else {
                     logger.warn(`[stripe webhook] no valid plan_id in metadata for session ${session.id}, subscription not created`);
                 }
-
+logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} with plan ${planIdNum} and password ${generatedPassword}  `); 
                 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
                 await sendWelcomeEmail({
                     to: email, ownerName: owner_name, salonName: salon_name,
                     email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
                 });
 
-                logger.info(`[stripe webhook] tenant ${tenantId} created for ${email}`);
+                logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} password ${generatedPassword}`);
             } catch (err) {
-                logger.error('[stripe webhook] tenant creation error:', err.message);
+              logger.error(`[stripe webhook] tenant creation error : ` , err.message);
             }
         });
     }
@@ -953,6 +954,16 @@ app.post("/salon-admin/api/services", requireTenantAuth, (req, res) => {
   }
 
   try {
+    const sub = getTenantSubscription(tenantId);
+    if (sub) {
+      const currentCount = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_services`).get().cnt;
+      if (currentCount >= sub.max_services) {
+        return res.status(403).json({
+          error: `Service limit reached. Your plan allows up to ${sub.max_services} services. Upgrade to add more.`,
+        });
+      }
+    }
+
     const r = db.prepare(`
       INSERT INTO ${tenantId}_services (name, price, description, branch, durationMinutes, updated_at)
       VALUES (?, ?, ?, ?, ?, datetime('now'))

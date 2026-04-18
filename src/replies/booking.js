@@ -316,6 +316,7 @@ function isValidTime(text, dateStr = null) {
   return true;
 }
 // Parse user time input → "HH:MM" 24-hour string
+
 function parseTimeTo24h(text) {
   const t = text.trim();
   // Handle "X baje" — assume PM for 1-7, AM otherwise (salon context)
@@ -323,21 +324,37 @@ function parseTimeTo24h(text) {
   if (bajeMatch) {
     let h = parseInt(bajeMatch[1], 10);
     if (h >= 1 && h <= 7) h += 12; // 2 baje = 14:00
+    if (h < 0 || h > 23) return null; // Validate hour range
     return `${String(h).padStart(2, '0')}:00`;
   }
+
   const match12 = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
   if (match12) {
     let h = parseInt(match12[1], 10);
     const m = parseInt(match12[2] || '0', 10);
     const period = match12[3].toLowerCase();
+
+    // Validate hour and minute ranges
+    if (h < 1 || h > 12) return null;
+    if (m < 0 || m > 59) return null;
+
     if (period === 'pm' && h !== 12) h += 12;
     if (period === 'am' && h === 12) h = 0;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
+
   const match24 = t.match(/^(\d{1,2}):(\d{2})$/);
   if (match24) {
-    return `${String(parseInt(match24[1], 10)).padStart(2, '0')}:${match24[2]}`;
+    let h = parseInt(match24[1], 10);
+    const m = parseInt(match24[2], 10);
+
+    // Validate hour and minute ranges for 24-hour format
+    if (h < 0 || h > 23) return null;
+    if (m < 0 || m > 59) return null;
+
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
+
   return null;
 }
 
@@ -1141,4 +1158,19 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
   return 'Let\'s start fresh! Type *book* to make an appointment.';
 }
 
-module.exports = { handleBookingStep, handleRescheduleFlow, handleCancellationFlow };
+module.exports = {
+  handleBookingStep, handleRescheduleFlow, handleCancellationFlow, handleBookingStep,
+  handleCancellationFlow,
+  handleRescheduleFlow,
+  // Export helpers for testability:
+  isValidName,
+  isValidPhone,
+  isValidDate,
+  isValidTime,
+  parseTimeTo24h,
+  normalizeDateToISO,
+  extractName,
+  extractPhone,
+  extractDate,
+  extractTime,
+};

@@ -6,7 +6,7 @@
  */
 
 'use strict';
-
+const { validateStatusTransition } = require('../src/index');
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
