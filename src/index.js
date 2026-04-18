@@ -40,6 +40,9 @@ const {
   deletePlan,
   hardDeletePlan,
   createSubscription,
+  updateSubscription,
+  cancelSubscription,
+  setTenantPlanOverride,
   getSubscriptions,
   storeResetToken,
   getValidResetToken,
@@ -783,6 +786,8 @@ app.post("/api/stripe/webhook", async (req, res) => {
         return res.status(200).json({ received: true });
     }
 
+    const toIso = (ts) => (ts == null ? null : new Date(ts * 1000).toISOString());
+
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const meta = session.metadata || {};
@@ -815,18 +820,71 @@ app.post("/api/stripe/webhook", async (req, res) => {
                 } else {
                     logger.warn(`[stripe webhook] no valid plan_id in metadata for session ${session.id}, subscription not created`);
                 }
-logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} with plan ${planIdNum} and password ${generatedPassword}  `); 
                 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
                 await sendWelcomeEmail({
                     to: email, ownerName: owner_name, salonName: salon_name,
                     email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
                 });
 
-                logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} password ${generatedPassword}`);
+                logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} with plan ${planIdNum}`);
             } catch (err) {
               logger.error(`[stripe webhook] tenant creation error : ` , err.message);
             }
         });
+    }
+    else if (event.type === 'customer.subscription.created') {
+        const sub = event.data.object;
+        try {
+            const superDb = getSuperDb();
+            const existing = superDb.prepare('SELECT id FROM subscriptions WHERE stripe_subscription_id = ?').get(sub.id);
+            if (existing) {
+                updateSubscription(sub.id, {
+                    currentPeriodStart: toIso(sub.current_period_start),
+                    currentPeriodEnd: toIso(sub.current_period_end),
+                });
+                logger.info(`[stripe webhook] subscription.created: period dates written for ${sub.id}`);
+            } else {
+                logger.warn(`[stripe webhook] subscription.created: no DB row found for ${sub.id} (checkout.session.completed pending)`);
+            }
+        } catch (err) {
+            logger.error(`[stripe webhook] subscription.created handler error:`, err.message);
+        }
+    }
+    else if (event.type === 'customer.subscription.updated') {
+        const sub = event.data.object;
+        try {
+            const superDb = getSuperDb();
+            const row = superDb.prepare('SELECT tenant_id, plan_id FROM subscriptions WHERE stripe_subscription_id = ?').get(sub.id);
+            if (!row) {
+                logger.warn(`[stripe webhook] subscription.updated: no DB row found for ${sub.id}`);
+            } else {
+                let newPlanId;
+                const stripePriceId = sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].price && sub.items.data[0].price.id;
+                if (stripePriceId) {
+                    const planByPrice = superDb.prepare('SELECT id FROM plans WHERE stripe_price_id = ?').get(stripePriceId);
+                    if (planByPrice && planByPrice.id !== row.plan_id) newPlanId = planByPrice.id;
+                }
+                updateSubscription(sub.id, {
+                    planId: newPlanId,
+                    status: sub.status,
+                    currentPeriodStart: toIso(sub.current_period_start),
+                    currentPeriodEnd: toIso(sub.current_period_end),
+                });
+                logger.info(`[stripe webhook] subscription.updated: ${sub.id} status=${sub.status}${newPlanId ? ` planId=${newPlanId}` : ''}`);
+            }
+        } catch (err) {
+            logger.error(`[stripe webhook] subscription.updated handler error:`, err.message);
+        }
+    }
+    else if (event.type === 'customer.subscription.deleted') {
+        const sub = event.data.object;
+        try {
+            const cancellationDate = toIso(sub.canceled_at) || new Date().toISOString();
+            cancelSubscription(sub.id, cancellationDate);
+            logger.info(`[stripe webhook] subscription.deleted: ${sub.id} canceled at ${cancellationDate}`);
+        } catch (err) {
+            logger.error(`[stripe webhook] subscription.deleted handler error:`, err.message);
+        }
     }
 
     res.json({ received: true });
@@ -2269,6 +2327,34 @@ app.patch("/super-admin/api/tenants/:tenantId/status", requireSuperAdminAuth, (r
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.patch("/super-admin/api/tenants/:tenantId/plan", requireSuperAdminAuth, (req, res) => {
+    const { tenantId } = req.params;
+    const { plan_id, expires_at } = req.body || {};
+
+    if (!plan_id || !expires_at) {
+        return res.status(400).json({ ok: false, error: 'plan_id and expires_at are required' });
+    }
+    const planIdNum = parseInt(plan_id, 10);
+    if (Number.isNaN(planIdNum) || planIdNum <= 0) {
+        return res.status(400).json({ ok: false, error: 'plan_id must be a positive integer' });
+    }
+
+    // Normalize expires_at: 'YYYY-MM-DD' -> 'YYYY-MM-DDT00:00:00.000Z'
+    let expiresIso = String(expires_at);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(expiresIso)) {
+        expiresIso = `${expiresIso}T00:00:00.000Z`;
+    }
+
+    try {
+        setTenantPlanOverride(tenantId, planIdNum, expiresIso);
+        logger.info(`[admin plan override] tenant=${tenantId} plan=${planIdNum} expires=${expiresIso}`);
+        res.json({ ok: true });
+    } catch (err) {
+        logger.error('[admin plan override]', err.message);
+        res.json({ ok: false, error: err.message });
+    }
 });
 
 app.post("/super-admin/api/settings", requireSuperAdminAuth, (req, res) => {
