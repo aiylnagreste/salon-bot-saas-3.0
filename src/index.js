@@ -50,6 +50,7 @@ const {
   getTenantSubscription,
   getTenantCorsOrigin,
   setTenantCorsOrigin,
+  freezeExcessServices,
 } = require("./db/tenantManager");
 
 // Auth middleware
@@ -129,9 +130,7 @@ app.use('/salon-admin/api', (err, req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  const allowedOrigins = [
-    'http://localhost:3002',
-    process.env.FRONTEND_URL || '',
+  const allowedOrigins = [getTenantCorsOrigin(req.headers.origin)
   ].filter(Boolean);
   const origin = req.headers.origin;
 
@@ -536,20 +535,43 @@ function validateStatusTransition(currentStatus, newStatus) {
 
 app.get("/", (_req, res) => res.send("Salon Bot is running ✅"));
 
-// CORS pre-flight for chat
-app.options("/api/chat", (_req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.sendStatus(204);
+// CORS pre-flight for chat — look up tenant by origin
+app.options("/api/chat", (req, res) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    try {
+      const db = getSuperDb();
+      const row = db.prepare(
+        'SELECT tenant_id FROM salon_tenants WHERE cors_origin = ? AND status = ?'
+      ).get(origin, 'active');
+      if (row) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+        res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+        return res.sendStatus(204);
+      }
+    } catch (_e) { /* fall through */ }
+  }
+  res.sendStatus(403);
 });
 
 app.post("/api/chat", async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
   const { message, sessionId, tenantId } = req.body;
   if (!message || !sessionId)
     return res.status(400).json({ error: "message and sessionId required" });
   if (!tenantId)
     return res.status(400).json({ error: "tenantId required" });
+
+  // Enforce per-tenant CORS origin — block if not configured
+  const corsOrigin = getTenantCorsOrigin(tenantId);
+  if (!corsOrigin)
+    return res.status(403).json({ error: "Chat not enabled for this salon" });
+  const requestOrigin = req.headers.origin;
+  if (!requestOrigin || requestOrigin !== corsOrigin)
+    return res.status(403).json({ error: "Origin not allowed" });
+  res.setHeader("Access-Control-Allow-Origin", corsOrigin);
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
   // Rate limit: 60 messages / minute per sessionId
   if (rateLimit(`chat:${sessionId}`, 60, 60_000))
@@ -2522,6 +2544,34 @@ app.post("/super-admin/api/settings", requireSuperAdminAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// Super admin — set CORS origin for a specific tenant
+app.patch("/super-admin/api/tenants/:tenantId/cors-origin", requireSuperAdminAuth, (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const { cors_origin } = req.body || {};
+    const tenant = getTenantById(tenantId);
+    if (!tenant) return res.status(404).json({ ok: false, error: 'Tenant not found' });
+    setTenantCorsOrigin(tenantId, cors_origin || null);
+    logger.info(`[super-admin] cors_origin set for ${tenantId}: ${cors_origin || 'null'}`);
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error('[super-admin cors-origin]', err.message);
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+// Super admin — get CORS origin for a specific tenant
+app.get("/super-admin/api/tenants/:tenantId/cors-origin", requireSuperAdminAuth, (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const cors_origin = getTenantCorsOrigin(tenantId);
+    res.json({ ok: true, cors_origin });
+  } catch (err) {
+    logger.error('[super-admin cors-origin]', err.message);
+    res.json({ ok: false, error: err.message });
+  }
+});
+
 // List pending password-reset requests
 app.get("/super-admin/api/reset-requests", requireSuperAdminAuth, (_req, res) => {
     // Deprecated — reset requests are now handled via email tokens
@@ -2772,6 +2822,27 @@ server.listen(PORT, async () => {
   logger.info(`Salon Bot server running on port ${PORT}`);
   await initializeAllTenants();
   getDb(); // ensure schema initialised
+
+  // PLN-02 startup backfill: freeze excess services for any tenant whose service
+  // count exceeds their current plan limit. This is a no-op for tenants already
+  // within their limit, and is idempotent on every restart.
+  // Needed because the frozen column was added with DEFAULT 0, so tenants whose
+  // plan was already set before Phase 2 had freezeExcessServices() never called.
+  try {
+    const allTenants = getAllTenants();
+    for (const t of allTenants.filter((t) => t.status === "active")) {
+      const sub = getTenantSubscription(t.tenant_id);
+      if (sub && Number.isFinite(sub.max_services)) {
+        const frozen = freezeExcessServices(t.tenant_id, sub.max_services);
+        if (frozen > 0) {
+          logger.info(`[startup] Froze ${frozen} excess services for ${t.tenant_id} (plan limit=${sub.max_services})`);
+        }
+      }
+    }
+    logger.info("[startup] Plan limit enforcement backfill complete");
+  } catch (e) {
+    logger.warn("[startup] Plan limit enforcement backfill failed:", e.message);
+  }
 
   // Optional migration
   // if (process.env.RUN_MIGRATION === "true") {

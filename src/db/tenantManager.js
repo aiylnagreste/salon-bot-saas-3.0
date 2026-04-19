@@ -881,8 +881,11 @@ function setTenantPlanOverride(tenantId, planId) {
     // Must happen AFTER the override transaction commits.
     const planRow = db.prepare('SELECT max_services FROM plans WHERE id = ?').get(planId);
     if (planRow && Number.isFinite(planRow.max_services)) {
-        freezeExcessServices(tenantId, planRow.max_services);
-        unfreezeServices(tenantId, planRow.max_services);
+        const frozen = freezeExcessServices(tenantId, planRow.max_services);
+        const unfrozen = unfreezeServices(tenantId, planRow.max_services);
+        logger.info(`[admin plan override] freeze result for ${tenantId}: frozen=${frozen} unfrozen=${unfrozen} maxServices=${planRow.max_services}`);
+    } else {
+        logger.warn(`[admin plan override] could not enforce plan limits for ${tenantId}: planRow=${JSON.stringify(planRow)}`);
     }
 }
 

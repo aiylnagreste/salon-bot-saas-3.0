@@ -245,9 +245,9 @@ async function handleVoiceTool(name, args, tenantId) {
                     let cur = Math.ceil((toM(time.trim()) + 1) / 30) * 30;
                     while (cur + svcDuration <= closeM && hints.length < 3) {
                         const sh = Math.floor(cur / 60), sm = cur % 60;
-                        const slotT = `${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`;
+                        const slotT = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`;
                         const eM2 = cur + svcDuration;
-                        const slotE = `${String(Math.floor(eM2/60)).padStart(2,'0')}:${String(eM2%60).padStart(2,'0')}`;
+                        const slotE = `${String(Math.floor(eM2 / 60)).padStart(2, '0')}:${String(eM2 % 60).padStart(2, '0')}`;
                         const free = allStaff.filter(s => {
                             const c = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_staff_bookings WHERE staffId = ? AND status = 'active' AND startTime < ? AND endTime > ?`).get(s.id, `${normalizedDate} ${slotE}`, `${normalizedDate} ${slotT}`);
                             return c.cnt === 0;
@@ -286,7 +286,7 @@ async function handleVoiceTool(name, args, tenantId) {
         if (staffNameSaved) confirm += ` with ${staffNameSaved}`;
         return confirm + '.';
     }
-    
+
     if (name === 'cancel_booking') {
         const { phone, confirm, booking_index } = args;
 
@@ -648,9 +648,9 @@ async function handleVoiceTool(name, args, tenantId) {
             let cur = Math.ceil((toM(time) + 1) / 30) * 30;
             while (cur + dur <= closeMin && hints.length < 3) {
                 const sh = Math.floor(cur / 60), sm = cur % 60;
-                const sT = `${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`;
+                const sT = `${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}`;
                 const eT2 = cur + dur;
-                const eT = `${String(Math.floor(eT2/60)).padStart(2,'0')}:${String(eT2%60).padStart(2,'0')}`;
+                const eT = `${String(Math.floor(eT2 / 60)).padStart(2, '0')}:${String(eT2 % 60).padStart(2, '0')}`;
                 const free = allStaff.filter(s => {
                     const c = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_staff_bookings WHERE staffId = ? AND status = 'active' AND startTime < ? AND endTime > ?`).get(s.id, `${normalizedDate} ${eT}`, `${normalizedDate} ${sT}`);
                     return c.cnt === 0;
@@ -690,13 +690,18 @@ function setupCallServer(server) {
             return;
         }
 
-        const allowed = (process.env.WIDGET_ALLOWED_ORIGINS || '*')
-            .split(',')
-            .map(o => o.trim());
         const origin = req.headers.origin || '';
+        const { getTenantCorsOrigin } = require('../db/tenantManager');
+        const corsOrigin = getTenantCorsOrigin(tenantId);
 
-        if (!allowed.includes('*') && !allowed.includes(origin)) {
-            socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        if (!corsOrigin) {
+            socket.write('HTTP/1.1 403 Forbidden\r\n\r\nVoice calls not enabled for this salon');
+            socket.destroy();
+            return;
+        }
+
+        if (origin !== corsOrigin) {
+            socket.write('HTTP/1.1 403 Forbidden\r\n\r\nOrigin not allowed');
             socket.destroy();
             return;
         }
@@ -747,7 +752,6 @@ You are a live voice receptionist for ${salonName} beauty salon. You speak ONLY 
 
 LANGUAGE RULES:
 - YOUR RESPONSES MUST BE IN URDU OR ENGLISH, based on the caller's language. If the caller speaks in Urdu, respond in Urdu. If they speak in English, respond in English.
-- DEFAULT TO ENGLISH if you are unsure about the caller's language, but try to pick up on any Urdu words or phrases they use as a signal to switch to Urdu.
 - NEVER use Hindi words. Use "shukriya" not "shukria", "bohat acha" not "bahut accha", "khubsoorat" not "sundar".
 - Do not say "aapka din shubh ho" or any Hindi blessings.
 
@@ -963,23 +967,57 @@ GENERAL:
                 },
             });
 
+            // ws.on('message', (data) => {
+            //     if (sessionClosed) return;
+
+            //     if (typeof data === 'string' || (data instanceof Buffer && data[0] === 0x7b)) {
+            //         try {
+            //             const msg = JSON.parse(data.toString());
+            //             if (msg.type === 'greet') {
+            //                 console.log('[call] Sending greeting trigger to Gemini');
+            //                 session.sendClientContent({
+            //                     turns: [{
+            //                         role: 'user',
+            //                         parts: [{ text: '__GREET__' }],
+            //                     }],
+            //                     turnComplete: true,
+            //                 });
+            //             }
+            //         } catch (_) { }
+            //         return;
+            //     }
+
+            //     try {
+            //         session.sendRealtimeInput({
+            //             audio: {
+            //                 data: Buffer.from(data).toString('base64'),
+            //                 mimeType: 'audio/pcm;rate=16000',
+            //             },
+            //         });
+            //     } catch (err) {
+            //         console.error('[call] sendRealtimeInput error:', err.message);
+            //     }
+            // });
+
+            // Send greeting immediately when session is ready
+            setTimeout(() => {
+                if (!sessionClosed) {
+                    console.log('[call] Sending auto-greeting to Gemini');
+                    session.sendClientContent({
+                        turns: [{
+                            role: 'user',
+                            parts: [{ text: '__GREET__' }],
+                        }],
+                        turnComplete: true,
+                    });
+                }
+            }, 500);
+
             ws.on('message', (data) => {
                 if (sessionClosed) return;
 
                 if (typeof data === 'string' || (data instanceof Buffer && data[0] === 0x7b)) {
-                    try {
-                        const msg = JSON.parse(data.toString());
-                        if (msg.type === 'greet') {
-                            console.log('[call] Sending greeting trigger to Gemini');
-                            session.sendClientContent({
-                                turns: [{
-                                    role: 'user',
-                                    parts: [{ text: '__GREET__' }],
-                                }],
-                                turnComplete: true,
-                            });
-                        }
-                    } catch (_) { }
+                    // Handle any other client messages if needed, but remove greet handler
                     return;
                 }
 
@@ -994,7 +1032,6 @@ GENERAL:
                     console.error('[call] sendRealtimeInput error:', err.message);
                 }
             });
-
             ws.on('close', () => {
                 console.log('[call] Browser disconnected — tenant:', tenantId, 'sessionId:', callSessionId);
                 sessionClosed = true;

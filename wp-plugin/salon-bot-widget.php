@@ -155,7 +155,7 @@ function salonbot_settings_page() {
                                required />
                         <p class="description">
                             The URL where your Salon Bot server is deployed.<br>
-                            The widget script will be loaded from <code>{Server URL}/widget.js</code>.
+                            The widget script will be loaded from <code>{Server URL}</code>.
                         </p>
                     </td>
                 </tr>
