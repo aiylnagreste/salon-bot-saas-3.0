@@ -48,6 +48,8 @@ const {
   getValidResetToken,
   markResetTokenUsed,
   getTenantSubscription,
+  getTenantCorsOrigin,
+  setTenantCorsOrigin,
 } = require("./db/tenantManager");
 
 // Auth middleware
@@ -2133,6 +2135,31 @@ app.get("/salon-admin/api/plan-features", requireTenantAuth, (req, res) => {
   } catch (err) {
     logger.error("[admin] plan-features error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Salon Admin — CORS Origin (per-tenant widget/voice CORS setting)
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get("/salon-admin/api/cors-origin", requireTenantAuth, (req, res) => {
+  try {
+    const result = getTenantCorsOrigin(req.tenantId);
+    res.json({ ok: true, cors_origin: result });
+  } catch (err) {
+    logger.error("[cors-origin] GET failed", err);
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.put("/salon-admin/api/cors-origin", requireTenantAuth, (req, res) => {
+  try {
+    const { cors_origin } = req.body;
+    setTenantCorsOrigin(req.tenantId, cors_origin || null);
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error("[cors-origin] PUT failed", err);
+    res.json({ ok: false, error: err.message });
   }
 });
 
