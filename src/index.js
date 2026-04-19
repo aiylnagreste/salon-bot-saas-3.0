@@ -2163,6 +2163,38 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Salon Admin — Tenant Status (for frontend suspension modal polling)
+//  Does NOT use requireTenantAuth — it reports the suspended state itself,
+//  so it must remain reachable when the tenant is suspended.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/salon-admin/api/tenant-status", (req, res) => {
+  try {
+    const token = req.cookies.tenantToken;
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+    const JWT_SECRET = process.env.TENANT_JWT_SECRET || "your-super-secret-jwt-key-change-this";
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (_) {
+      return res.status(401).json({ error: "Invalid or expired session" });
+    }
+
+    const tenant = getTenantById(decoded.tenantId);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+    res.json({
+      tenant_id: tenant.tenant_id,
+      status: tenant.status,           // 'active' | 'suspended'
+      salon_name: tenant.salon_name
+    });
+  } catch (err) {
+    logger.error("[tenant-status] Error:", err.message);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Salon Admin — Plan Features (feature flags for UI conditional rendering)
 //  Reads live from super.db on every call — NOT cached in JWT (SEC-03).
 // ─────────────────────────────────────────────────────────────────────────────

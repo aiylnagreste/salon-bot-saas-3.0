@@ -20,6 +20,20 @@ const requireTenantAuth = (req, res, next) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         req.tenantId = decoded.tenantId;
         req.tenant = decoded;
+
+        // Live tenant-status check — handles super-admin suspending a tenant
+        // after the JWT was issued. Must hit super.db on every request (SEC-03 style:
+        // same pattern as planGate.js, which also reads super.db per-request).
+        if (!isTenantActive(decoded.tenantId)) {
+            if (req.path.startsWith('/salon-admin/api/')) {
+                return res.status(403).json({
+                    error: 'Salon suspended',
+                    code: 'SALON_SUSPENDED'
+                });
+            }
+            return res.redirect('/salon-admin/login');
+        }
+
         next();
     } catch (err) {
         console.error('Auth error:', err.message);
