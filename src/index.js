@@ -153,6 +153,41 @@ app.use("/widget.js", (_req, res, next) => {
   next();
 });
 
+// Conditional per-tenant CORS for widget/voice endpoints
+// Only applies to non-admin, non-webhook routes. Looks up the tenant by the
+// requesting Origin stored in salon_tenants.cors_origin, then checks the
+// tenant's active subscription for widget_access or ai_calls_access before
+// granting CORS. Fails silently to avoid breaking unrelated requests.
+app.use((req, res, next) => {
+  // Skip admin and webhook routes — they have their own CORS rules
+  if (req.path.startsWith('/salon-admin') || req.path.startsWith('/webhooks')) {
+    return next();
+  }
+
+  const origin = req.headers.origin;
+  if (!origin) return next();
+
+  try {
+    const db = getSuperDb();
+    const tenantRow = db.prepare(
+      'SELECT tenant_id FROM salon_tenants WHERE cors_origin = ? AND status = ?'
+    ).get(origin, 'active');
+    if (!tenantRow) return next();
+
+    const sub = getTenantSubscription(tenantRow.tenant_id);
+    if (!sub || (sub.widget_access !== 1 && sub.ai_calls_access !== 1)) return next();
+
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  } catch (e) {
+    // fail silently — CORS is best-effort, do not break the request
+  }
+  next();
+});
+
 // Serve /public (widget.js lives here)
 app.use(express.static(path.join(__dirname, "../public")));
 
