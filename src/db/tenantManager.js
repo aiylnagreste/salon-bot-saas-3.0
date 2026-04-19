@@ -355,6 +355,11 @@ function initSuperSchema() {
         )
     `);
 
+    // Migration: add cors_origin to salon_tenants (Phase 2, plan 02-05)
+    try {
+        superDb.prepare(`ALTER TABLE salon_tenants ADD COLUMN cors_origin TEXT DEFAULT NULL`).run();
+    } catch (e) { /* column already exists */ }
+
 }
 
 function generateTenantId() {
@@ -909,6 +914,19 @@ function markResetTokenUsed(tokenHash) {
     db.prepare(`UPDATE password_reset_tokens SET used = 1 WHERE token_hash = ?`).run(tokenHash);
 }
 
+// ── CORS Origin per-tenant ────────────────────────────────────────────────────
+
+function getTenantCorsOrigin(tenantId) {
+    const db = getSuperDb();
+    const row = db.prepare('SELECT cors_origin FROM salon_tenants WHERE tenant_id = ?').get(tenantId);
+    return row ? row.cors_origin : null;
+}
+
+function setTenantCorsOrigin(tenantId, origin) {
+    const db = getSuperDb();
+    db.prepare('UPDATE salon_tenants SET cors_origin = ? WHERE tenant_id = ?').run(origin, tenantId);
+}
+
 function closeConnections() {
     if (superDb) {
         superDb.close();
@@ -952,5 +970,7 @@ module.exports = {
     getTenantSubscription,
     freezeExcessServices,
     unfreezeServices,
+    getTenantCorsOrigin,
+    setTenantCorsOrigin,
     closeConnections,
 };
