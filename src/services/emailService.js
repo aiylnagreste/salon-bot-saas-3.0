@@ -43,44 +43,55 @@ async function sendWelcomeEmail({ to, ownerName, salonName, email, password, log
     <tr><td align="center">
       <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
         <tr>
-          <td style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:36px 40px;text-align:center;">
-            <h1 style="color:#fff;margin:0;font-size:24px;font-weight:700;">Welcome to SalonBot!</h1>
+          <td style="background:linear-gradient(135deg,#b5484b 0%,#6b3057 100%);padding:36px 40px;text-align:center;">
+            <div style="width:56px;height:56px;background:rgba(255,255,255,0.15);border-radius:16px;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
+              <span style="font-size:28px;">✨</span>
+            </div>
+            <h1 style="color:#fff;margin:0;font-size:24px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Welcome to SalonBot!</h1>
             <p style="color:rgba(255,255,255,0.85);margin:8px 0 0;font-size:14px;">Your salon management platform is ready</p>
-          </td>
-        </tr>
+           </td>
+         </tr>
         <tr>
           <td style="padding:36px 40px;">
-            <p style="color:#374151;font-size:15px;margin:0 0 24px;">Hi ${esc(ownerName)},</p>
-            <p style="color:#374151;font-size:15px;margin:0 0 24px;">
-              Your <strong>${esc(salonName)}</strong> account has been successfully created.
+            <p style="color:#1A1D23;font-size:15px;margin:0 0 24px;font-weight:500;">Hi ${esc(ownerName)},</p>
+            <p style="color:#5F6577;font-size:15px;margin:0 0 24px;line-height:1.6;">
+              Your <strong style="color:#b5484b;">${esc(salonName)}</strong> account has been successfully created.
               Here are your login credentials:
             </p>
-            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;border-radius:8px;padding:20px;margin-bottom:28px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#F8F9FC;border-radius:8px;padding:20px;margin-bottom:28px;border-left:3px solid #b5484b;">
               <tr><td>
-                <p style="margin:0 0 8px;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">Login Email</p>
-                <p style="margin:0 0 16px;font-size:16px;color:#1e293b;font-weight:500;">${esc(email)}</p>
-                <p style="margin:0 0 8px;font-size:13px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">Temporary Password</p>
-                <p style="margin:0;font-size:16px;color:#1e293b;font-weight:500;font-family:monospace;letter-spacing:0.1em;">${esc(password)}</p>
-              </td></tr>
+                <p style="margin:0 0 8px;font-size:11px;color:#5F6577;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Login Email</p>
+                <p style="margin:0 0 20px;font-size:16px;color:#1A1D23;font-weight:500;">${esc(email)}</p>
+                <p style="margin:0 0 8px;font-size:11px;color:#5F6577;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Temporary Password</p>
+                <p style="margin:0;font-size:16px;color:#b5484b;font-weight:600;font-family:'SF Mono',monospace;letter-spacing:0.5px;background:#fff;display:inline-block;padding:6px 12px;border-radius:6px;">${esc(password)}</p>
+               </td>
+             </tr>
             </table>
-            <p style="color:#6b7280;font-size:13px;margin:0 0 24px;">
-              Please change your password after your first login for security.
+            <p style="color:#5F6577;font-size:13px;margin:0 0 28px;line-height:1.5;">
+              ⚠️ Please change your password after your first login for security.
             </p>
-            <a href="${safeUrl(loginUrl)}" style="display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:15px;font-weight:600;">
+            <a href="${safeUrl(loginUrl)}" style="display:inline-block;background:linear-gradient(135deg,#b5484b 0%,#6b3057 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(181,72,75,0.3);">
               Login to Dashboard
             </a>
+            <p style="color:#9CA3B4;font-size:12px;margin:28px 0 0;text-align:center;">
+              Link expires in <strong>24 hours</strong> for security
+            </p>
           </td>
         </tr>
         <tr>
-          <td style="padding:20px 40px 28px;border-top:1px solid #f1f5f9;">
-            <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
+          <td style="padding:20px 40px 28px;border-top:1px solid #F1F5F9;">
+            <p style="margin:0;font-size:12px;color:#9CA3AF;text-align:center;">
               This email was sent by SalonBot. If you didn't sign up, please ignore this email.
+            </p>
+            <p style="margin:12px 0 0;font-size:11px;color:#CBD5E1;text-align:center;">
+              &copy; SalonBot — Secure salon management
             </p>
           </td>
         </tr>
       </table>
-    </td></tr>
-  </table>
+    </td>
+  </tr>
+</table>
 </body>
 </html>`,
     });
@@ -104,35 +115,45 @@ async function sendPasswordResetEmail({ to, ownerName, resetUrl }) {
     <tr><td align="center">
       <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
         <tr>
-          <td style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:36px 40px;text-align:center;">
-            <h1 style="color:#fff;margin:0;font-size:24px;font-weight:700;">Password Reset</h1>
+          <td style="background:linear-gradient(135deg,#b5484b 0%,#6b3057 100%);padding:36px 40px;text-align:center;">
+            <div style="width:56px;height:56px;background:rgba(255,255,255,0.15);border-radius:16px;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
+              <span style="font-size:28px;">🔒</span>
+            </div>
+            <h1 style="color:#fff;margin:0;font-size:24px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Password Reset</h1>
             <p style="color:rgba(255,255,255,0.85);margin:8px 0 0;font-size:14px;">This link expires in 5 minutes</p>
           </td>
         </tr>
         <tr>
           <td style="padding:36px 40px;">
-            <p style="color:#374151;font-size:15px;margin:0 0 20px;">Hi ${esc(ownerName)},</p>
-            <p style="color:#374151;font-size:15px;margin:0 0 28px;">
+            <p style="color:#1A1D23;font-size:15px;margin:0 0 20px;font-weight:500;">Hi ${esc(ownerName)},</p>
+            <p style="color:#5F6577;font-size:15px;margin:0 0 28px;line-height:1.6;">
               We received a request to reset your SalonBot password. Click the button below to set a new password.
-              This link will expire in <strong>5 minutes</strong>.
+              This link will expire in <strong style="color:#b5484b;">5 minutes</strong> for security.
             </p>
-            <a href="${safeUrl(resetUrl)}" style="display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:15px;font-weight:600;">
+            <a href="${safeUrl(resetUrl)}" style="display:inline-block;background:linear-gradient(135deg,#b5484b 0%,#6b3057 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(181,72,75,0.3);">
               Reset Password
             </a>
-            <p style="color:#6b7280;font-size:13px;margin:24px 0 0;">
-              If you didn't request a password reset, you can safely ignore this email. Your password won't be changed.
-            </p>
+            <div style="margin:32px 0 0;padding:16px;background:#F8F9FC;border-left:3px solid #b5484b;border-radius:6px;">
+              <p style="color:#5F6577;font-size:12px;margin:0 0 6px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;">⚠️ Security Notice</p>
+              <p style="color:#5F6577;font-size:13px;margin:0;line-height:1.5;">
+                If you didn't request a password reset, you can safely ignore this email. 
+                Your password won't be changed.
+              </p>
+            </div>
           </td>
         </tr>
         <tr>
-          <td style="padding:20px 40px 28px;border-top:1px solid #f1f5f9;">
-            <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
-              SalonBot · <a href="${safeUrl(process.env.FRONTEND_URL || 'https://salonbot.com')}" style="color:#9ca3af;">${esc(process.env.FRONTEND_URL || 'https://salonbot.com')}</a>
+          <td style="padding:20px 40px 28px;border-top:1px solid #F1F5F9;">
+            <p style="margin:0 0 8px;font-size:12px;color:#9CA3AF;text-align:center;">
+              SalonBot · Secure Salon Management
+            </p>
+            <p style="margin:0;font-size:11px;color:#CBD5E1;text-align:center;">
+              <a href="${safeUrl(process.env.FRONTEND_URL || 'https://salonbot.com')}" style="color:#b5484b;text-decoration:none;">${esc(process.env.FRONTEND_URL || 'https://salonbot.com')}</a>
             </p>
           </td>
         </tr>
       </table>
-    </td></tr>
+    </table>
   </table>
 </body>
 </html>`,
