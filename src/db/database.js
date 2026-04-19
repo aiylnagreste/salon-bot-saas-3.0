@@ -460,6 +460,10 @@ function ensureTenantTables(tenantId) {
     } else {
       console.log(`✅ Tables for tenant ${tenantId} already exist`);
     }
+    // Migration: ensure frozen column exists on services table (Phase 2 PLN-02..05)
+    try {
+      dbInstance.exec(`ALTER TABLE ${tenantId}_services ADD COLUMN frozen INTEGER NOT NULL DEFAULT 0`);
+    } catch (_) { /* column already exists */ }
   } catch (error) {
     console.error(`Error ensuring tenant tables for ${tenantId}:`, error);
     createTenantTables(tenantId);
