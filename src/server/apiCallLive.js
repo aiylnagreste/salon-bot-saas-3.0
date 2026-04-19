@@ -61,7 +61,7 @@ async function handleVoiceTool(name, args, tenantId) {
     if (name === 'get_services') {
         const rows = (cache && cache.services && cache.services.length)
             ? cache.services
-            : db.prepare(`SELECT name, price FROM ${tenantId}_services ORDER BY name`).all();
+            : db.prepare(`SELECT name, price FROM ${tenantId}_services WHERE frozen = 0 ORDER BY name`).all();
         if (!rows.length) return 'No services available right now.';
         return rows.map(r => `${r.name}: ${r.price}`).join(', ');
     }
@@ -148,8 +148,8 @@ async function handleVoiceTool(name, args, tenantId) {
                 || cache.services.find(s => s.name.toLowerCase().includes(svcLower));
         }
         if (!svcRow) {
-            svcRow = db.prepare(`SELECT name FROM ${tenantId}_services WHERE LOWER(name) = LOWER(?)`).get(service.trim())
-                || db.prepare(`SELECT name FROM ${tenantId}_services WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'`).get(service.trim());
+            svcRow = db.prepare(`SELECT name FROM ${tenantId}_services WHERE frozen = 0 AND LOWER(name) = LOWER(?)`).get(service.trim())
+                || db.prepare(`SELECT name FROM ${tenantId}_services WHERE frozen = 0 AND LOWER(name) LIKE '%' || LOWER(?) || '%'`).get(service.trim());
         }
         if (!svcRow) return `Service "${service}" not found. Please check the service name.`;
 

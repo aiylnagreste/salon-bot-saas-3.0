@@ -51,6 +51,7 @@ const {
   getTenantCorsOrigin,
   setTenantCorsOrigin,
   freezeExcessServices,
+  unfreezeServices,
 } = require("./db/tenantManager");
 
 // Auth middleware
@@ -2666,6 +2667,28 @@ app.put("/super-admin/api/plans/:planId", requireSuperAdminAuth, (req, res) => {
             whatsapp_access, instagram_access, facebook_access, ai_calls_access,
             stripe_price_id, is_active,
         });
+        // OOC-FIX-01: if max_services was in the request body, re-apply freeze/unfreeze
+        // to all tenants currently subscribed to this plan.
+        if (ms !== undefined && ms !== null) {
+            const parsedMs = parseInt(ms, 10);
+            if (Number.isFinite(parsedMs) && parsedMs >= 0) {
+                try {
+                    const subs = getSubscriptions().filter(
+                        (s) => s.plan_id === planId && s.status === 'active'
+                    );
+                    for (const sub of subs) {
+                        freezeExcessServices(sub.tenant_id, parsedMs);
+                        unfreezeServices(sub.tenant_id, parsedMs);
+                    }
+                    if (subs.length) {
+                        logger.info(`[plan update] re-applied freeze/unfreeze for ${subs.length} subscriber(s) of plan ${planId} (max_services=${parsedMs})`);
+                    }
+                } catch (hookErr) {
+                    // Don't fail the plan update if freeze hooks error — log and continue
+                    logger.error('[plan update] freeze hook failed:', hookErr.message);
+                }
+            }
+        }
         res.json(updated);
     } catch (err) {
         logger.error('[plan update]', err.message);
