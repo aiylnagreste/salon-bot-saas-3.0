@@ -322,6 +322,10 @@ function initSuperSchema() {
             updated_at TEXT DEFAULT (datetime('now'))
         )
     `);
+    // Migration: ensure widget_access column exists on plans (Phase 2 FEAT-05, FEAT-07)
+    try {
+        superDb.exec(`ALTER TABLE plans ADD COLUMN widget_access INTEGER NOT NULL DEFAULT 0`);
+    } catch (_) { /* column already exists */ }
 
     // Subscriptions table
     superDb.exec(`
@@ -706,7 +710,8 @@ function getTenantSubscription(tenantId) {
     const db = getSuperDb();
     return db.prepare(`
         SELECT s.*, p.name as plan_name, p.max_services, p.whatsapp_access,
-               p.instagram_access, p.facebook_access, p.ai_calls_access
+               p.instagram_access, p.facebook_access, p.ai_calls_access,
+               p.widget_access
         FROM subscriptions s
         JOIN plans p ON p.id = s.plan_id
         WHERE s.tenant_id = ? AND s.status = 'active'
