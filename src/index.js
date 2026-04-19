@@ -1045,10 +1045,12 @@ app.post("/salon-admin/api/services", requireTenantAuth, (req, res) => {
   try {
     const sub = getTenantSubscription(tenantId);
     if (sub) {
-      const currentCount = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_services`).get().cnt;
+      // PLN-01: count only non-frozen services against the plan limit
+      const currentCount = db.prepare(`SELECT COUNT(*) as cnt FROM ${tenantId}_services WHERE frozen = 0`).get().cnt;
       if (currentCount >= sub.max_services) {
         return res.status(403).json({
-          error: `Service limit reached. Your plan allows up to ${sub.max_services} services. Upgrade to add more.`,
+          ok: false,
+          error: `Service limit reached for your plan (max ${sub.max_services})`,
         });
       }
     }
@@ -2174,6 +2176,26 @@ app.put("/salon-admin/api/webhook-config", requireTenantAuth, (req, res) => {
     ig_page_access_token, ig_verify_token,
     fb_page_access_token, fb_verify_token,
   } = req.body;
+
+  // FEAT-04 / SEC-02: enforce plan features per channel the body is trying to save.
+  // Reads plan flags live from super.db (no JWT caching, SEC-03).
+  const wantsWhatsapp  = !!(wa_phone_number_id || wa_access_token || wa_verify_token);
+  const wantsInstagram = !!(ig_page_access_token || ig_verify_token);
+  const wantsFacebook  = !!(fb_page_access_token || fb_verify_token);
+
+  if (wantsWhatsapp || wantsInstagram || wantsFacebook) {
+    const sub = getTenantSubscription(req.tenantId);
+    const blocked = [];
+    if (wantsWhatsapp  && !(sub && sub.whatsapp_access  === 1)) blocked.push('whatsapp');
+    if (wantsInstagram && !(sub && sub.instagram_access === 1)) blocked.push('instagram');
+    if (wantsFacebook  && !(sub && sub.facebook_access  === 1)) blocked.push('facebook');
+    if (blocked.length) {
+      return res.status(403).json({
+        ok: false,
+        error: `Feature not available on your plan: ${blocked.join(', ')}`,
+      });
+    }
+  }
 
   upsertWebhookConfig(req.tenantId, {
     wa_phone_number_id, wa_access_token, wa_verify_token,
