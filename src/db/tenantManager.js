@@ -819,6 +819,17 @@ function updateSubscription(stripeSubscriptionId, { planId, status, currentPerio
             }
         }
     })();
+
+    // PLN-02 / PLN-05: freeze or unfreeze services based on the new plan's max_services.
+    // Must happen AFTER the subscription transaction commits.
+    if (planId !== undefined) {
+        const tenantRow = db.prepare('SELECT tenant_id FROM subscriptions WHERE stripe_subscription_id = ?').get(stripeSubscriptionId);
+        const planRow = db.prepare('SELECT max_services FROM plans WHERE id = ?').get(planId);
+        if (tenantRow && planRow && Number.isFinite(planRow.max_services)) {
+            freezeExcessServices(tenantRow.tenant_id, planRow.max_services);
+            unfreezeServices(tenantRow.tenant_id, planRow.max_services);
+        }
+    }
 }
 
 function cancelSubscription(stripeSubscriptionId, cancellationDate) {
@@ -860,6 +871,14 @@ function setTenantPlanOverride(tenantId, planId) {
 
         db.prepare(`UPDATE salon_tenants SET subscription_plan = ?, subscription_expires = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(plan.name, periodEnd, tenantId);
     })();
+
+    // PLN-02 / PLN-05: freeze or unfreeze services based on the new plan's max_services.
+    // Must happen AFTER the override transaction commits.
+    const planRow = db.prepare('SELECT max_services FROM plans WHERE id = ?').get(planId);
+    if (planRow && Number.isFinite(planRow.max_services)) {
+        freezeExcessServices(tenantId, planRow.max_services);
+        unfreezeServices(tenantId, planRow.max_services);
+    }
 }
 
 // ── Password Reset Tokens ─────────────────────────────────────────────────────
