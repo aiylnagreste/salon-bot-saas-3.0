@@ -65,8 +65,9 @@ function getServiceListReply(tenantId) {
   try {
     const db = getDb();
     const services = db.prepare(`
-      SELECT name, branch 
-      FROM ${tenantId}_services 
+      SELECT name, branch
+      FROM ${tenantId}_services
+      WHERE frozen = 0
       ORDER BY branch, name
     `).all();
 
