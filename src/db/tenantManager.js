@@ -706,6 +706,75 @@ function getSubscriptions() {
     `).all();
 }
 
+// ── Service Freeze / Unfreeze Helpers (PLN-02, PLN-05) ────────────────────────
+
+/**
+ * Freeze the oldest-first non-frozen services so that active count <= maxServices.
+ * Called when a tenant downgrades to a plan with lower max_services.
+ * No-op if active count already <= maxServices.
+ */
+function freezeExcessServices(tenantId, maxServices) {
+    if (!tenantId || !Number.isFinite(maxServices) || maxServices < 0) return 0;
+    const { getDb } = require('./database');
+    const db = getDb();
+    try {
+        const activeCount = db.prepare(
+            `SELECT COUNT(*) AS cnt FROM ${tenantId}_services WHERE frozen = 0`
+        ).get().cnt;
+        if (activeCount <= maxServices) return 0;
+
+        const toFreeze = activeCount - maxServices;
+        const rows = db.prepare(
+            `SELECT id FROM ${tenantId}_services WHERE frozen = 0 ORDER BY created_at ASC LIMIT ?`
+        ).all(toFreeze);
+        const update = db.prepare(
+            `UPDATE ${tenantId}_services SET frozen = 1, updated_at = datetime('now') WHERE id = ?`
+        );
+        db.transaction(() => {
+            for (const r of rows) update.run(r.id);
+        })();
+        logger.info(`[freeze] Froze ${rows.length} services for ${tenantId} (maxServices=${maxServices})`);
+        return rows.length;
+    } catch (err) {
+        logger.error(`[freeze] freezeExcessServices failed for ${tenantId}:`, err.message);
+        return 0;
+    }
+}
+
+/**
+ * Unfreeze oldest-frozen-first services so that active count rises toward maxServices.
+ * Called when a tenant upgrades to a plan with higher max_services.
+ * No-op if active count already >= maxServices.
+ * Uses updated_at ASC because that reflects the freeze order (rows were stamped when frozen).
+ */
+function unfreezeServices(tenantId, maxServices) {
+    if (!tenantId || !Number.isFinite(maxServices) || maxServices < 0) return 0;
+    const { getDb } = require('./database');
+    const db = getDb();
+    try {
+        const activeCount = db.prepare(
+            `SELECT COUNT(*) AS cnt FROM ${tenantId}_services WHERE frozen = 0`
+        ).get().cnt;
+        if (activeCount >= maxServices) return 0;
+
+        const toUnfreeze = maxServices - activeCount;
+        const rows = db.prepare(
+            `SELECT id FROM ${tenantId}_services WHERE frozen = 1 ORDER BY updated_at ASC LIMIT ?`
+        ).all(toUnfreeze);
+        const update = db.prepare(
+            `UPDATE ${tenantId}_services SET frozen = 0, updated_at = datetime('now') WHERE id = ?`
+        );
+        db.transaction(() => {
+            for (const r of rows) update.run(r.id);
+        })();
+        logger.info(`[freeze] Unfroze ${rows.length} services for ${tenantId} (maxServices=${maxServices})`);
+        return rows.length;
+    } catch (err) {
+        logger.error(`[freeze] unfreezeServices failed for ${tenantId}:`, err.message);
+        return 0;
+    }
+}
+
 function getTenantSubscription(tenantId) {
     const db = getSuperDb();
     return db.prepare(`
@@ -862,5 +931,7 @@ module.exports = {
     getValidResetToken,
     markResetTokenUsed,
     getTenantSubscription,
+    freezeExcessServices,
+    unfreezeServices,
     closeConnections,
 };
