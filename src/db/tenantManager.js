@@ -739,6 +739,11 @@ function freezeExcessServices(tenantId, maxServices) {
             for (const r of rows) update.run(r.id);
         })();
         logger.info(`[freeze] Froze ${rows.length} services for ${tenantId} (maxServices=${maxServices})`);
+        try {
+            const { patchCache } = require('../cache/salonDataCache');
+            const fresh = db.prepare(`SELECT * FROM ${tenantId}_services WHERE frozen = 0 ORDER BY branch, name`).all();
+            patchCache(tenantId, 'services', 'replace', fresh).catch(() => {});
+        } catch (_) {}
         return rows.length;
     } catch (err) {
         logger.error(`[freeze] freezeExcessServices failed for ${tenantId}:`, err.message);
@@ -773,6 +778,11 @@ function unfreezeServices(tenantId, maxServices) {
             for (const r of rows) update.run(r.id);
         })();
         logger.info(`[freeze] Unfroze ${rows.length} services for ${tenantId} (maxServices=${maxServices})`);
+        try {
+            const { patchCache } = require('../cache/salonDataCache');
+            const fresh = db.prepare(`SELECT * FROM ${tenantId}_services WHERE frozen = 0 ORDER BY branch, name`).all();
+            patchCache(tenantId, 'services', 'replace', fresh).catch(() => {});
+        } catch (_) {}
         return rows.length;
     } catch (err) {
         logger.error(`[freeze] unfreezeServices failed for ${tenantId}:`, err.message);
