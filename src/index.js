@@ -56,6 +56,7 @@ const {
   requireTenantAuth,
   generateTenantToken,
 } = require("./middleware/tenantAuth");
+const { requirePlanFeature } = require("./middleware/planGate");
 
 // Platform webhook handlers
 const { handleWhatsApp, verifyWhatsApp } = require("./handlers/whatsapp");
@@ -2097,6 +2098,40 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
     dataFreshAsOf: serverTime,
     serverTime,
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Salon Admin — Plan Features (feature flags for UI conditional rendering)
+//  Reads live from super.db on every call — NOT cached in JWT (SEC-03).
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/salon-admin/api/plan-features", requireTenantAuth, (req, res) => {
+  try {
+    const superDb = getSuperDb();
+    const row = superDb.prepare(`
+      SELECT p.max_services, p.whatsapp_access, p.instagram_access,
+             p.facebook_access, p.widget_access, p.ai_calls_access
+      FROM subscriptions s
+      JOIN plans p ON p.id = s.plan_id
+      WHERE s.tenant_id = ? AND s.status = 'active'
+      ORDER BY s.created_at DESC LIMIT 1
+    `).get(req.tenantId);
+
+    if (!row) {
+      // No active subscription → restrictive defaults (matches planGate behavior)
+      return res.json({
+        max_services: 10,
+        whatsapp_access: 0,
+        instagram_access: 0,
+        facebook_access: 0,
+        widget_access: 0,
+        ai_calls_access: 0,
+      });
+    }
+    res.json(row);
+  } catch (err) {
+    logger.error("[admin] plan-features error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
