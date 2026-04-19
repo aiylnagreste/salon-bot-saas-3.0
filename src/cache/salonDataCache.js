@@ -60,7 +60,7 @@ async function _buildFromDb(tenantId) {
     }
 
     try {
-      cache.services = db.prepare(`SELECT * FROM ${tenantId}_services ORDER BY branch, name`).all() || [];
+      cache.services = db.prepare(`SELECT * FROM ${tenantId}_services WHERE frozen = 0 ORDER BY branch, name`).all() || [];
     } catch (e) {
       logger.warn(`[cache] Could not load services for ${tenantId}:`, e.message);
       cache.services = [];

@@ -4,8 +4,9 @@ function getPricesReply(tenantId) {
   try {
     const db = getDb();
     const services = db.prepare(`
-      SELECT name, price, description, branch 
-      FROM ${tenantId}_services 
+      SELECT name, price, description, branch
+      FROM ${tenantId}_services
+      WHERE frozen = 0
       ORDER BY branch, name
     `).all();
 
@@ -41,7 +42,7 @@ function getServiceDetail(name, tenantId) {
   try {
     const db = getDb();
     const service = db.prepare(
-      `SELECT * FROM ${tenantId}_services WHERE LOWER(name) LIKE ?`
+      `SELECT * FROM ${tenantId}_services WHERE frozen = 0 AND LOWER(name) LIKE ?`
     ).get(`%${name.toLowerCase()}%`);
 
     if (!service) return "Sorry, I couldn't find that service. Type *prices* to see all services.";

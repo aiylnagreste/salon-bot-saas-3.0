@@ -11,7 +11,7 @@ const { patchCache } = require('../cache/salonDataCache');
 function getServiceNames(tenantId) {
   try {
     const db = getDb();
-    return db.prepare(`SELECT name FROM ${tenantId}_services ORDER BY name`).all().map(s => s.name);
+    return db.prepare(`SELECT name FROM ${tenantId}_services WHERE frozen = 0 ORDER BY name`).all().map(s => s.name);
   } catch {
     return [];
   }
