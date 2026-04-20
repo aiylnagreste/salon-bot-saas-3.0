@@ -27,6 +27,7 @@ const {
   getTenantById,
   updateSalonName,
   isTenantActive,
+  getTenantAccessStatus,
   getWebhookConfig,
   upsertWebhookConfig,
   clearWebhookChannel,
@@ -109,8 +110,8 @@ const PORT = process.env.PORT || 3000;
 
 // Raw body needed for Stripe webhook signature verification — MUST be before express.json()
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // Minimal cookie parser (no extra dependency)
 app.use((req, _res, next) => {
@@ -1897,7 +1898,13 @@ app.get("/salon-admin/api/settings/general", requireTenantAuth, (req, res) => {
     return result;
   })();
   const tenant = getTenantById(tenantId);
-  res.json({ ...base, tenantId, owner_name: tenant?.owner_name ?? null });
+  res.json({
+    ...base,
+    tenantId,
+    owner_name: tenant?.owner_name ?? null,
+    salon_name: tenant?.salon_name ?? null,   // for Sidebar branding — LHB-01
+    logo_data_uri: base.logo_data_uri ?? null, // explicit null if unset — LHB-01
+  });
 });
 
 app.put("/salon-admin/api/settings/general", requireTenantAuth, (req, res) => {
@@ -1932,6 +1939,68 @@ app.put("/salon-admin/api/salon-name", requireTenantAuth, (req, res) => {
     return res.status(400).json({ error: "salon_name is required" });
   updateSalonName(req.tenantId, salon_name.trim());
   res.json({ success: true, salon_name: salon_name.trim() });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Salon Admin — Settings: Branding (logo + salon name) — LHB-01
+// ─────────────────────────────────────────────────────────────────────────────
+app.put("/salon-admin/api/settings/branding", requireTenantAuth, (req, res) => {
+  try {
+    const tenantId = req.tenantId;
+    const { logo_data_uri, salon_name } = req.body || {};
+
+    // Validate salon_name (required, 1..100 chars)
+    if (typeof salon_name !== 'string' || !salon_name.trim()) {
+      return res.status(400).json({ error: "salon_name is required" });
+    }
+    const trimmedName = salon_name.trim();
+    if (trimmedName.length > 100) {
+      return res.status(400).json({ error: "salon_name must be 100 characters or fewer" });
+    }
+
+    // Validate logo_data_uri (optional — null/undefined/"" clears it; otherwise must be a data URI image)
+    let logoValue = null;
+    if (logo_data_uri !== undefined && logo_data_uri !== null && logo_data_uri !== '') {
+      if (typeof logo_data_uri !== 'string' ||
+          !/^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/.test(logo_data_uri)) {
+        return res.status(400).json({ error: "logo_data_uri must be a base64 image data URI (png/jpg/gif/webp/svg)" });
+      }
+      // Soft cap at ~1.5MB encoded (≈1MB raw). Body limit is 2MB so this leaves room for salon_name.
+      if (logo_data_uri.length > 1_500_000) {
+        return res.status(413).json({ error: "Logo is too large. Please upload an image under 1 MB." });
+      }
+      logoValue = logo_data_uri;
+    }
+
+    const db = getDb();
+    const upsert = db.prepare(`
+      INSERT INTO ${tenantId}_app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `);
+    const del = db.prepare(`DELETE FROM ${tenantId}_app_settings WHERE key = ?`);
+
+    db.transaction(() => {
+      if (logoValue === null) {
+        // Empty string or explicit null → remove the key so GET returns null
+        del.run('logo_data_uri');
+      } else {
+        upsert.run('logo_data_uri', logoValue);
+      }
+    })();
+
+    // Update salon name in super.db (reuses existing helper)
+    updateSalonName(tenantId, trimmedName);
+
+    invalidateSettingsCache();
+    patchCache(tenantId, "appSettings", "upsert", {
+      logo_data_uri: logoValue,
+    }).catch((e) => logger.error("[cache] branding patch:", e.message));
+
+    res.json({ ok: true, salon_name: trimmedName, logo_data_uri: logoValue });
+  } catch (err) {
+    logger.error('[branding] update failed:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2183,9 +2252,11 @@ app.get("/salon-admin/api/tenant-status", (req, res) => {
     const tenant = getTenantById(decoded.tenantId);
     if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
+    const access = getTenantAccessStatus(decoded.tenantId);
     res.json({
       tenant_id: tenant.tenant_id,
-      status: tenant.status,           // 'active' | 'suspended'
+      status: access.active ? 'active' : 'suspended',
+      reason: access.reason,
       salon_name: tenant.salon_name
     });
   } catch (err) {
