@@ -2488,12 +2488,70 @@ app.get("/super-admin/logout", (_req, res) => {
 app.get("/super-admin/api/stats", requireSuperAdminAuth, (_req, res) => {
   try {
     const tenants = getAllTenants();
+    const activeTenants = tenants.filter((t) => t.status === "active");
+    
+    // Calculate MRR from active subscriptions
+    let mrr = 0;
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    
+    // Get all active subscriptions
+    const subscriptions = getSubscriptions();
+    
+    for (const sub of subscriptions) {
+      // Only count active subscriptions
+      if (sub.status !== 'active') continue;
+      
+      // Get the plan details
+      const plan = getPlanById(sub.plan_id);
+      if (!plan) continue;
+      
+      // Check if subscription is active this month
+      let isActiveThisMonth = false;
+      if (sub.current_period_start && sub.current_period_end) {
+        const periodStart = new Date(sub.current_period_start);
+        const periodEnd = new Date(sub.current_period_end);
+        const nowDate = new Date();
+        
+        // Check if current date falls within the subscription period
+        isActiveThisMonth = nowDate >= periodStart && nowDate <= periodEnd;
+      } else {
+        // If no period dates, assume active
+        isActiveThisMonth = true;
+      }
+      
+      if (!isActiveThisMonth) continue;
+      
+      // Calculate monthly recurring revenue based on billing cycle
+      if (plan.billing_cycle === 'monthly') {
+        mrr += plan.price_cents;
+      } else if (plan.billing_cycle === 'yearly') {
+        mrr += plan.price_cents / 12;
+      }
+      // one-time plans don't count toward MRR
+    }
+    
+    // Calculate new tenants this month
+    const newThisMonth = tenants.filter(t => {
+      const createdAt = new Date(t.created_at);
+      return createdAt.getMonth() === currentMonth && 
+             createdAt.getFullYear() === currentYear;
+    }).length;
+    
+    // Calculate revenue change from previous month (simplified)
+    // You can enhance this by storing previous month's MRR in a separate table
+    const revenueChange = 0; // You can implement this by tracking historical MRR
+    
     res.json({
       total_tenants: tenants.length,
-      active_tenants: tenants.filter((t) => t.status === "active").length,
-      total_revenue: 0,
+      active_tenants: activeTenants.length,
+      new_this_month: newThisMonth,
+      mrr: Math.round(mrr), // Return in cents
+      revenue_change: revenueChange,
     });
   } catch (err) {
+    logger.error("[super-admin stats] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
