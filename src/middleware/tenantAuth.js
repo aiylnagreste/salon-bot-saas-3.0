@@ -1,7 +1,7 @@
 // middleware/tenantAuth.js
 
 const jwt = require('jsonwebtoken');
-const { getTenantById, isTenantActive } = require('../db/tenantManager');
+const { getTenantById, getTenantAccessStatus } = require('../db/tenantManager');
 
 const JWT_SECRET = process.env.TENANT_JWT_SECRET || "your-super-secret-jwt-key-change-this";
 
@@ -24,11 +24,13 @@ const requireTenantAuth = (req, res, next) => {
         // Live tenant-status check — handles super-admin suspending a tenant
         // after the JWT was issued. Must hit super.db on every request (SEC-03 style:
         // same pattern as planGate.js, which also reads super.db per-request).
-        if (!isTenantActive(decoded.tenantId)) {
+        const access = getTenantAccessStatus(decoded.tenantId);
+        if (!access.active) {
             if (req.path.startsWith('/salon-admin/api/')) {
                 return res.status(403).json({
-                    error: 'Salon suspended',
-                    code: 'SALON_SUSPENDED'
+                    error: 'Salon access blocked',
+                    code: 'SALON_SUSPENDED',  // Keep existing code for backward compat
+                    reason: access.reason      // 'suspended' | 'subscription_expired' | 'plan_deactivated' | 'not_found'
                 });
             }
             return res.redirect('/salon-admin/login');

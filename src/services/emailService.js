@@ -31,9 +31,9 @@ function createTransport() {
 async function sendWelcomeEmail({ to, ownerName, salonName, email, password, loginUrl }) {
     const transport = createTransport();
     await transport.sendMail({
-        from: process.env.SMTP_FROM || '"SalonBot" <noreply@salonbot.com>',
+        from: process.env.SMTP_FROM || '"Salon" <noreply@salon.com>',
         to,
-        subject: `Welcome to SalonBot — Your account is ready`,
+        subject: `Welcome to Salon — Your account is ready`,
         html: `
 <!DOCTYPE html>
 <html>
@@ -47,7 +47,7 @@ async function sendWelcomeEmail({ to, ownerName, salonName, email, password, log
             <div style="width:56px;height:56px;background:rgba(255,255,255,0.15);border-radius:16px;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
               <span style="font-size:28px;">✨</span>
             </div>
-            <h1 style="color:#fff;margin:0;font-size:24px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Welcome to SalonBot!</h1>
+            <h1 style="color:#fff;margin:0;font-size:24px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Welcome to Salon!</h1>
             <p style="color:rgba(255,255,255,0.85);margin:8px 0 0;font-size:14px;">Your salon management platform is ready</p>
            </td>
          </tr>
@@ -81,10 +81,10 @@ async function sendWelcomeEmail({ to, ownerName, salonName, email, password, log
         <tr>
           <td style="padding:20px 40px 28px;border-top:1px solid #F1F5F9;">
             <p style="margin:0;font-size:12px;color:#9CA3AF;text-align:center;">
-              This email was sent by SalonBot. If you didn't sign up, please ignore this email.
+              This email was sent by Salon. If you didn't sign up, please ignore this email.
             </p>
             <p style="margin:12px 0 0;font-size:11px;color:#CBD5E1;text-align:center;">
-              &copy; SalonBot — Secure salon management
+              &copy; Salon — Secure salon management
             </p>
           </td>
         </tr>
@@ -103,9 +103,9 @@ async function sendWelcomeEmail({ to, ownerName, salonName, email, password, log
 async function sendPasswordResetEmail({ to, ownerName, resetUrl }) {
     const transport = createTransport();
     await transport.sendMail({
-        from: process.env.SMTP_FROM || '"SalonBot" <noreply@salonbot.com>',
+        from: process.env.SMTP_FROM || '"Salon" <noreply@salon.com>',
         to,
-        subject: `Reset your SalonBot password`,
+        subject: `Reset your Salon password`,
         html: `
 <!DOCTYPE html>
 <html>
@@ -127,7 +127,7 @@ async function sendPasswordResetEmail({ to, ownerName, resetUrl }) {
           <td style="padding:36px 40px;">
             <p style="color:#1A1D23;font-size:15px;margin:0 0 20px;font-weight:500;">Hi ${esc(ownerName)},</p>
             <p style="color:#5F6577;font-size:15px;margin:0 0 28px;line-height:1.6;">
-              We received a request to reset your SalonBot password. Click the button below to set a new password.
+              We received a request to reset your Salon password. Click the button below to set a new password.
               This link will expire in <strong style="color:#b5484b;">5 minutes</strong> for security.
             </p>
             <a href="${safeUrl(resetUrl)}" style="display:inline-block;background:linear-gradient(135deg,#b5484b 0%,#6b3057 100%);color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(181,72,75,0.3);">
@@ -145,10 +145,10 @@ async function sendPasswordResetEmail({ to, ownerName, resetUrl }) {
         <tr>
           <td style="padding:20px 40px 28px;border-top:1px solid #F1F5F9;">
             <p style="margin:0 0 8px;font-size:12px;color:#9CA3AF;text-align:center;">
-              SalonBot · Secure Salon Management
+              Salon · Secure Salon Management
             </p>
             <p style="margin:0;font-size:11px;color:#CBD5E1;text-align:center;">
-              <a href="${safeUrl(process.env.FRONTEND_URL || 'https://salonbot.com')}" style="color:#b5484b;text-decoration:none;">${esc(process.env.FRONTEND_URL || 'https://salonbot.com')}</a>
+              <a href="${safeUrl(process.env.FRONTEND_URL || '')}" style="color:#b5484b;text-decoration:none;">${esc(process.env.FRONTEND_URL || '')}</a>
             </p>
           </td>
         </tr>

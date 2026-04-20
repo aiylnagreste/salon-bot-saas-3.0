@@ -539,6 +539,47 @@ function isTenantActive(tenantId) {
     return tenant ? tenant.status === 'active' : false;
 }
 
+function getTenantAccessStatus(tenantId) {
+    const db = getSuperDb();
+    const tenant = db.prepare(
+        'SELECT status, subscription_expires FROM salon_tenants WHERE tenant_id = ?'
+    ).get(tenantId);
+    if (!tenant) return { active: false, reason: 'not_found' };
+    if (tenant.status !== 'active') return { active: false, reason: 'suspended' };
+
+    // Look up the active subscription + its plan
+    const sub = db.prepare(`
+        SELECT s.current_period_end, p.is_active AS plan_is_active
+        FROM subscriptions s
+        JOIN plans p ON p.id = s.plan_id
+        WHERE s.tenant_id = ? AND s.status = 'active'
+        ORDER BY s.created_at DESC LIMIT 1
+    `).get(tenantId);
+
+    if (sub) {
+        // Plan deactivated check runs BEFORE expiry check
+        if (sub.plan_is_active === 0) {
+            return { active: false, reason: 'plan_deactivated' };
+        }
+        if (sub.current_period_end) {
+            const end = new Date(sub.current_period_end).getTime();
+            if (Number.isFinite(end) && end < Date.now()) {
+                return { active: false, reason: 'subscription_expired' };
+            }
+        }
+        return { active: true, reason: 'active' };
+    }
+
+    // No subscription row — fall back to legacy salon_tenants.subscription_expires
+    if (tenant.subscription_expires) {
+        const legacyEnd = new Date(tenant.subscription_expires).getTime();
+        if (Number.isFinite(legacyEnd) && legacyEnd < Date.now()) {
+            return { active: false, reason: 'subscription_expired' };
+        }
+    }
+    return { active: true, reason: 'active' };
+}
+
 // ── Per-tenant webhook config ─────────────────────────────────────────────────
 
 function getWebhookConfig(tenantId) {
@@ -962,6 +1003,7 @@ module.exports = {
     getTenantSetting,
     setTenantSetting,
     isTenantActive,
+    getTenantAccessStatus,
     getWebhookConfig,
     upsertWebhookConfig,
     clearWebhookChannel,
