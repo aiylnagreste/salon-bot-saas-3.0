@@ -1428,7 +1428,7 @@ app.put("/salon-admin/api/bookings/:id", requireTenantAuth, (req, res) => {
 
   // Admin panel bookings are never customer requests — preserve existing staffRequested from DB
   const existingBooking = db.prepare(`SELECT staffRequested FROM ${tenantId}_bookings WHERE id = ?`).get(bookingId);
-  const staffRequested = existingBooking?.staffRequested ?? 0;
+  let staffRequested = existingBooking?.staffRequested ?? 0;
 
   if (staff_id) {
     // Pass excludeBookingId so the existing booking doesn't conflict with itself
