@@ -1137,7 +1137,8 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
           staffExplicitlyRequested = true;
         } else {
           let reply = '⚠️ Please choose by *number*, type a *name*, or type *skip* for no preference.\n\n';
-          reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
+          reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} `).join('\n');
+          //reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
           return reply;
         }
       }
