@@ -3288,6 +3288,201 @@ async function autoMarkNoShowsForTenant(tenantId) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Super Admin — Integrations Management
+// ─────────────────────────────────────────────────────────────────────────────
+// Get all salons with their integration status based on plan features
+app.get("/super-admin/api/integrations/salons", requireSuperAdminAuth, (req, res) => {
+  try {
+    const tenants = getAllTenants();
+    const result = tenants.map(tenant => {
+      // Get the tenant's active subscription with plan details
+      const subscription = getTenantSubscription(tenant.tenant_id);
+      const config = getWebhookConfig(tenant.tenant_id);
+      
+      // Determine if the plan has access to each feature
+      const hasWhatsAppAccess = subscription?.whatsapp_access === 1;
+      const hasInstagramAccess = subscription?.instagram_access === 1;
+      const hasFacebookAccess = subscription?.facebook_access === 1;
+      
+      // Only show integrations that the plan has access to
+      return {
+        salon_id: tenant.id,
+        salon_name: tenant.salon_name,
+        owner_name: tenant.owner_name,
+        tenant_id: tenant.tenant_id,
+        plan_name: subscription?.plan_name,
+        // Features available from plan
+        plan_features: {
+          whatsapp: hasWhatsAppAccess,
+          instagram: hasInstagramAccess,
+          facebook: hasFacebookAccess,
+          widget: subscription?.widget_access === 1,
+          ai_calls: subscription?.ai_calls_access === 1,
+        },
+        // Actual connection status (whether configured)
+        has_whatsapp: hasWhatsAppAccess && !!(config?.wa_access_token && config?.wa_phone_number_id),
+        has_instagram: hasInstagramAccess && !!config?.ig_page_access_token,
+        has_facebook: hasFacebookAccess && !!config?.fb_page_access_token,
+        has_widget: subscription?.widget_access === 1,
+        has_ai_calls: subscription?.ai_calls_access === 1 && !!config?.ai_calls_enabled,
+        // Show if plan allows but not configured
+        needs_configuration: {
+          whatsapp: hasWhatsAppAccess && !(config?.wa_access_token && config?.wa_phone_number_id),
+          instagram: hasInstagramAccess && !config?.ig_page_access_token,
+          facebook: hasFacebookAccess && !config?.fb_page_access_token,
+        }
+      };
+    });
+    
+    // Optional: Filter to only show salons that have at least one integration feature in their plan
+    // const salonsWithIntegrations = result.filter(salon => 
+    //   salon.plan_features.whatsapp || salon.plan_features.instagram || salon.plan_features.facebook
+    // );
+    
+    res.json(result);
+  } catch (err) {
+    logger.error("[super-admin integrations] Error fetching salons:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+// Get specific salon integration details
+
+// Get specific salon integration details
+app.get("/super-admin/api/integrations/:salonId", requireSuperAdminAuth, (req, res) => {
+  try {
+    const salonId = parseInt(req.params.salonId);
+    const tenants = getAllTenants();
+    const tenant = tenants.find(t => t.id === salonId);
+
+    if (!tenant) {
+      return res.status(404).json({ error: "Salon not found" });
+    }
+
+    const config = getWebhookConfig(tenant.tenant_id);
+
+    res.json({
+      whatsapp_phone_number_id: config?.wa_phone_number_id || null,
+      whatsapp_access_token: config?.wa_access_token ? "configured" : null,  // never expose actual token
+      instagram_access_token: config?.ig_page_access_token ? "configured" : null,
+      facebook_access_token: config?.fb_page_access_token ? "configured" : null,
+    });
+  } catch (err) {
+    logger.error("[super-admin integrations] Error fetching salon details:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+// Replace the existing PUT /super-admin/api/integrations/:salonId with:
+app.put("/super-admin/api/integrations/:salonId", requireSuperAdminAuth, (req, res) => {
+  try {
+    const salonId = parseInt(req.params.salonId);
+    const tenants = getAllTenants();
+    const tenant = tenants.find(t => t.id === salonId);
+
+    if (!tenant) {
+      return res.status(404).json({ error: "Salon not found" });
+    }
+
+    upsertWebhookConfig(tenant.tenant_id, {
+      wa_phone_number_id: req.body.wa_phone_number_id || undefined,
+      wa_access_token: req.body.wa_access_token || undefined,
+      wa_verify_token: req.body.wa_verify_token || undefined,
+      ig_page_access_token: req.body.ig_page_access_token || undefined,
+      ig_verify_token: req.body.ig_verify_token || undefined,
+      fb_page_access_token: req.body.fb_page_access_token || undefined,
+      fb_verify_token: req.body.fb_verify_token || undefined,
+    });
+
+    logger.info(`[super-admin] Updated webhook config for tenant ${tenant.tenant_id}`);
+    res.json({ success: true });
+
+  } catch (err) {
+    logger.error("[super-admin integrations] Error updating integration:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+// Delete/clear a specific channel's integration for a salon
+app.delete("/super-admin/api/integrations/:salonId/:channel", requireSuperAdminAuth, (req, res) => {
+  try {
+    const salonId = parseInt(req.params.salonId);
+    const { channel } = req.params;
+
+    if (!["whatsapp", "instagram", "facebook"].includes(channel)) {
+      return res.status(400).json({ error: "Invalid channel. Must be: whatsapp, instagram, or facebook" });
+    }
+
+    const tenants = getAllTenants();
+    const tenant = tenants.find(t => t.id === salonId);
+
+    if (!tenant) {
+      return res.status(404).json({ error: "Salon not found" });
+    }
+
+    clearWebhookChannel(tenant.tenant_id, channel);
+
+    logger.info(`[super-admin] Cleared ${channel} integration for tenant ${tenant.tenant_id}`);
+    res.json({ success: true, message: `${channel} integration cleared` });
+
+  } catch (err) {
+    logger.error("[super-admin integrations] Error deleting channel:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all subscriptions for super admin
+app.get("/super-admin/api/subscriptions", requireSuperAdminAuth, (_req, res) => {
+  try {
+    const subscriptions = getSubscriptions();
+    // Enrich with tenant and plan details
+    const enriched = subscriptions.map(sub => {
+      const tenant = getTenantById(sub.tenant_id);
+      const plan = getPlanById(sub.plan_id);
+      return {
+        ...sub,
+        tenant_name: tenant?.salon_name || "Unknown",
+        tenant_email: tenant?.email || "Unknown",
+        plan_name: plan?.name || "Unknown",
+      };
+    });
+    res.json(enriched);
+  } catch (err) {
+    logger.error("[super-admin subscriptions] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get plan features for a specific tenant (super admin view)
+app.get("/super-admin/api/tenants/:tenantId/plan-features", requireSuperAdminAuth, (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const sub = getTenantSubscription(tenantId);
+
+    if (!sub) {
+      return res.json({
+        max_services: 10,
+        whatsapp_access: 0,
+        instagram_access: 0,
+        facebook_access: 0,
+        widget_access: 0,
+        ai_calls_access: 0,
+      });
+    }
+
+    const plan = getPlanById(sub.plan_id);
+    res.json({
+      max_services: plan?.max_services || 10,
+      whatsapp_access: plan?.whatsapp_access || 0,
+      instagram_access: plan?.instagram_access || 0,
+      facebook_access: plan?.facebook_access || 0,
+      widget_access: plan?.widget_access || 0,
+      ai_calls_access: plan?.ai_calls_access || 0,
+    });
+  } catch (err) {
+    logger.error("[super-admin plan-features] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function sendRemindersForTenant(tenantId) {
   const db = getDb();
   const setting = db.prepare(`SELECT value FROM ${tenantId}_business_settings WHERE key='reminder_hours'`).get();
@@ -3333,7 +3528,7 @@ app.post("/test-email", async (req, res) => {
   try {
     const { sendPlanUpgradeEmail } = require('./services/emailService');
     await sendPlanUpgradeEmail({
-      to: "test@example.com",
+      to: "alyan@sigmasqr.com",
       ownerName: "Test Owner",
       salonName: "Test Salon",
       oldPlanName: "Free",
