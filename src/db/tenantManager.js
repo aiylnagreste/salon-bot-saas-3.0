@@ -533,6 +533,110 @@ function setTenantSetting(tenantId, key, value) {
     `).run(tenantId, key, value);
 }
 
+// ── Update subscription by tenant_id (for upgrades/downgrades) ─────────────────
+function updateSubscriptionByTenantId(tenantId, { planId, status, currentPeriodStart, currentPeriodEnd, updatedAt } = {}) {
+    const db = getSuperDb();
+
+    // Get the current active subscription for this tenant
+    const currentSub = db.prepare(`
+        SELECT id, plan_id FROM subscriptions 
+        WHERE tenant_id = ? AND status = 'active' 
+        ORDER BY created_at DESC LIMIT 1
+    `).get(tenantId);
+
+    if (!currentSub) {
+        // No active subscription found, create a new one
+        const now = new Date();
+        const periodStart = currentPeriodStart || now.toISOString();
+        let periodEnd = currentPeriodEnd;
+
+        if (!periodEnd && planId) {
+            const plan = getPlanById(planId);
+            if (plan) {
+                const end = new Date(now);
+                if (plan.billing_cycle === 'yearly') {
+                    end.setFullYear(end.getFullYear() + 1);
+                } else {
+                    end.setMonth(end.getMonth() + 1);
+                }
+                periodEnd = end.toISOString();
+            }
+        }
+
+        const result = db.prepare(`
+            INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_start, current_period_end)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(tenantId, planId || currentSub?.plan_id, status || 'active', periodStart, periodEnd);
+
+        // Update salon_tenants denormalized fields
+        if (planId) {
+            const plan = getPlanById(planId);
+            if (plan) {
+                db.prepare(`
+                    UPDATE salon_tenants 
+                    SET subscription_plan = ?, subscription_expires = ?, updated_at = datetime('now')
+                    WHERE tenant_id = ?
+                `).run(plan.name, periodEnd, tenantId);
+            }
+        }
+
+        return db.prepare(`SELECT * FROM subscriptions WHERE id = ?`).get(result.lastInsertRowid);
+    }
+
+    // Update existing subscription
+    db.transaction(() => {
+        const fields = [];
+        const values = [];
+
+        if (planId !== undefined) {
+            fields.push('plan_id = ?');
+            values.push(planId);
+
+            // Update salon_tenants subscription_plan name
+            const plan = getPlanById(planId);
+            if (plan) {
+                db.prepare(`
+                    UPDATE salon_tenants 
+                    SET subscription_plan = ?, updated_at = datetime('now')
+                    WHERE tenant_id = ?
+                `).run(plan.name, tenantId);
+            }
+        }
+        if (status !== undefined) { fields.push('status = ?'); values.push(status); }
+        if (currentPeriodStart !== undefined) { fields.push('current_period_start = ?'); values.push(currentPeriodStart); }
+        if (currentPeriodEnd !== undefined) {
+            fields.push('current_period_end = ?');
+            values.push(currentPeriodEnd);
+
+            // Update salon_tenants subscription_expires
+            db.prepare(`
+                UPDATE salon_tenants 
+                SET subscription_expires = ?, updated_at = datetime('now')
+                WHERE tenant_id = ?
+            `).run(currentPeriodEnd, tenantId);
+        }
+
+        if (fields.length === 0) return;
+
+        fields.push("updated_at = datetime('now')");
+        values.push(currentSub.id);
+
+        db.prepare(`UPDATE subscriptions SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    })();
+
+    // After updating, apply service freeze/unfreeze based on new plan limits
+    if (planId !== undefined) {
+        const newPlan = getPlanById(planId);
+        if (newPlan && Number.isFinite(newPlan.max_services)) {
+            freezeExcessServices(tenantId, newPlan.max_services);
+            unfreezeServices(tenantId, newPlan.max_services);
+            logger.info(`[subscription] Applied service limits for ${tenantId} (max_services=${newPlan.max_services})`);
+        }
+    }
+
+    return getTenantSubscription(tenantId);
+}
+
 function isTenantActive(tenantId) {
     const db = getSuperDb();
     const tenant = db.prepare('SELECT status FROM salon_tenants WHERE tenant_id = ?').get(tenantId);
@@ -831,19 +935,84 @@ function unfreezeServices(tenantId, maxServices) {
     }
 }
 
-function getTenantSubscription(tenantId) {
-    const db = getSuperDb();
-    return db.prepare(`
-        SELECT s.*, p.name as plan_name, p.max_services, p.whatsapp_access,
-               p.instagram_access, p.facebook_access, p.ai_calls_access,
-               p.widget_access
-        FROM subscriptions s
-        JOIN plans p ON p.id = s.plan_id
-        WHERE s.tenant_id = ? AND s.status = 'active'
-        ORDER BY s.created_at DESC LIMIT 1
-    `).get(tenantId) || null;
-}
+// function getTenantSubscription(tenantId) {
+//     const db = getSuperDb();
+//     return db.prepare(`
+//         SELECT s.*, p.name as plan_name, p.max_services, p.whatsapp_access,
+//                p.instagram_access, p.facebook_access, p.ai_calls_access,
+//                p.widget_access
+//         FROM subscriptions s
+//         JOIN plans p ON p.id = s.plan_id
+//         WHERE s.tenant_id = ? AND s.status = 'active'
+//         ORDER BY s.created_at DESC LIMIT 1
+//     `).get(tenantId) || null;
+// }
 
+// ── Get tenant's current subscription with full plan details ─────────────────
+function getTenantSubscription(tenantId) {
+    try {
+        const db = getSuperDb();
+        const subscription = db.prepare(`
+            SELECT s.*, 
+                   p.name as plan_name, 
+                   p.price_cents,
+                   p.billing_cycle,
+                   p.max_services, 
+                   p.whatsapp_access,
+                   p.instagram_access, 
+                   p.facebook_access, 
+                   p.ai_calls_access,
+                   p.widget_access
+            FROM subscriptions s
+            JOIN plans p ON p.id = s.plan_id
+            WHERE s.tenant_id = ? AND s.status = 'active'
+            ORDER BY s.created_at DESC LIMIT 1
+        `).get(tenantId);
+        
+        if (!subscription) {
+            console.log(`[getTenantSubscription] No active subscription found for ${tenantId}`);
+            return null;
+        }
+        
+        // Calculate remaining days if current_period_end exists
+        let remainingDays = null;
+        let remainingDaysText = null;
+        
+        if (subscription.current_period_end) {
+            const endDate = new Date(subscription.current_period_end);
+            const now = new Date();
+            
+            if (endDate > now) {
+                const diffTime = endDate - now;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                remainingDays = diffDays;
+                
+                if (diffDays === 1) {
+                    remainingDaysText = "1 day remaining";
+                } else if (diffDays <= 7) {
+                    remainingDaysText = `${diffDays} days remaining`;
+                } else if (diffDays <= 30) {
+                    const weeks = Math.floor(diffDays / 7);
+                    remainingDaysText = `${weeks} week${weeks > 1 ? 's' : ''} remaining`;
+                } else {
+                    const months = Math.floor(diffDays / 30);
+                    remainingDaysText = `${months} month${months > 1 ? 's' : ''} remaining`;
+                }
+            } else {
+                remainingDaysText = "Expired";
+            }
+        }
+        
+        return {
+            ...subscription,
+            remaining_days: remainingDays,
+            remaining_days_text: remainingDaysText
+        };
+    } catch (err) {
+        console.error(`[getTenantSubscription] Error for ${tenantId}:`, err.message);
+        return null;
+    }
+}
 // ── Subscription updates (SUB-01, SUB-02, SUB-03) ─────────────────────────────
 
 function updateSubscription(stripeSubscriptionId, { planId, status, currentPeriodStart, currentPeriodEnd } = {}) {
@@ -1023,6 +1192,7 @@ module.exports = {
     getValidResetToken,
     markResetTokenUsed,
     getTenantSubscription,
+    updateSubscriptionByTenantId,
     freezeExcessServices,
     unfreezeServices,
     getTenantCorsOrigin,

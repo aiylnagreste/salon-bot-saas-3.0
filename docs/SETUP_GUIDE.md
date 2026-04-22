@@ -171,3 +171,12 @@ META_VERIFY_TOKEN=any_random_string
 | Stripe webhook creates no tenant | `STRIPE_WEBHOOK_SECRET` wrong | Re-copy from Stripe CLI or Dashboard |
 | Email login link points to wrong port | `FRONTEND_URL` wrong | Set `FRONTEND_URL=http://localhost:3001` |
 | Free plan redirects to `:3002` | Default fallback in code is `3002` | Always set `FRONTEND_URL` explicitly |
+
+
+
+
+http://localhost:3000/test-gmail-connection
+
+http://localhost:3000/test-email
+
+http://localhost:3000/check-app-password

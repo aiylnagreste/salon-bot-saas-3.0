@@ -44,6 +44,55 @@ async function createCheckoutSession({ planId, stripePriceId, email, ownerName, 
 }
 
 /**
+ * Create a Stripe Checkout Session for plan upgrades (with customer ID)
+ */
+async function createUpgradeCheckoutSession({ planId, stripePriceId, email, ownerName, salonName, phone, successUrl, cancelUrl, stripeCustomerId, tenantId }) {
+    const required = { planId, stripePriceId, email, successUrl, cancelUrl };
+    for (const [key, val] of Object.entries(required)) {
+        if (!val) throw new Error(`createUpgradeCheckoutSession: missing required field "${key}"`);
+    }
+    const stripe = getStripe();
+
+    const sessionParams = {
+        mode: 'subscription',
+        payment_method_types: ['card'],
+        expand: ['subscription'],
+        line_items: [{ price: stripePriceId, quantity: 1 }],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        metadata: {
+            plan_id: String(planId),
+            owner_name: ownerName,
+            salon_name: salonName,
+            phone: String(phone || ''),
+            email,
+            is_upgrade: 'true',
+            action: 'upgrade',           // ✅ Add this
+            tenantId: tenantId,          // ✅ Add this - the tenant ID
+            newPlanId: String(planId),   // ✅ Add this
+            oldPlanId: 'none',           // ✅ Add this (will be updated in upgrade route)
+        },
+        subscription_data: {
+            metadata: {
+                plan_id: String(planId),
+                salon_name: salonName,
+                is_upgrade: 'true',
+            },
+        },
+    };
+
+    // Use customer ID if provided, otherwise use email
+    if (stripeCustomerId) {
+        sessionParams.customer = stripeCustomerId;
+    } else {
+        sessionParams.customer_email = email;
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
+    return session;
+}
+
+/**
  * Construct and verify a Stripe webhook event.
  */
 function constructWebhookEvent(payload, signature) {
@@ -59,7 +108,19 @@ function constructWebhookEvent(payload, signature) {
 }
 
 async function retrieveSubscription(subscriptionId) {
-    return getStripe().subscriptions.retrieve(subscriptionId);
+    const sub = await getStripe().subscriptions.retrieve(subscriptionId);
+
+    // ✅ Stripe SDK v11+ (you're on v22) moved period dates to current_period.start/end
+    // Normalize to flat fields so all existing callers work unchanged
+    sub.current_period_start = sub.current_period?.start ?? null;
+    sub.current_period_end = sub.current_period?.end ?? null;
+
+    return sub;
 }
 
-module.exports = { createCheckoutSession, constructWebhookEvent, retrieveSubscription };
+module.exports = { 
+    createCheckoutSession, 
+    constructWebhookEvent, 
+    retrieveSubscription,
+    createUpgradeCheckoutSession  // Export the new function
+};

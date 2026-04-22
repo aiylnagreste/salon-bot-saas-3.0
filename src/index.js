@@ -42,6 +42,7 @@ const {
   hardDeletePlan,
   createSubscription,
   updateSubscription,
+  updateSubscriptionByTenantId,
   cancelSubscription,
   setTenantPlanOverride,
   getSubscriptions,
@@ -71,8 +72,8 @@ const { handleFacebook, verifyFacebook } = require("./handlers/facebook");
 // Chat router (web widget)
 const { routeMessage } = require("./core/router");
 
-const { sendWelcomeEmail, sendPasswordResetEmail } = require('./services/emailService');
-const { createCheckoutSession, constructWebhookEvent, retrieveSubscription } = require('./services/stripeService');
+const { sendWelcomeEmail, sendPasswordResetEmail, sendPlanUpgradeEmail, sendPlanDowngradeEmail } = require('./services/emailService');
+const { createCheckoutSession,createUpgradeCheckoutSession, constructWebhookEvent, retrieveSubscription } = require('./services/stripeService');
 
 // ── JWT secret — REQUIRED in production ──────────────────────────────────────
 const JWT_SECRET = process.env.TENANT_JWT_SECRET;
@@ -147,6 +148,47 @@ app.use((req, res, next) => {
     return res.sendStatus(200);
   }
   next();
+});
+
+
+
+// In index.js - Add this endpoint for verification
+app.post("/api/stripe/verify-subscription", async (req, res) => {
+  try {
+    const { session_id, is_upgrade } = req.body;
+    
+    if (!session_id) {
+      return res.status(400).json({ error: "session_id required" });
+    }
+    
+    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    const session = await stripe.checkout.sessions.retrieve(session_id, {
+      expand: ['subscription', 'customer']
+    });
+    
+    if (session.payment_status === 'paid') {
+      // If this was an upgrade, you might want to update the subscription here
+      // But the webhook should already handle that
+      
+      return res.json({ 
+        success: true, 
+        subscription_id: session.subscription?.id,
+        is_upgrade: is_upgrade || false,
+        customer_id: session.customer?.id
+      });
+    } else {
+      return res.json({ 
+        success: false, 
+        error: "Payment not completed" 
+      });
+    }
+  } catch (err) {
+    console.error("[verify-subscription] Error:", err.message);
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
+  }
 });
 // CORS for widget.js
 app.use("/widget.js", (_req, res, next) => {
@@ -821,8 +863,8 @@ app.post("/api/register", async (req, res) => {
             planId: plan.id,
             stripePriceId: plan.stripe_price_id,
             email, ownerName: owner_name, salonName: salon_name, phone,
-            successUrl: `${frontendUrl}/register/success?session_id={CHECKOUT_SESSION_ID}`,
-            cancelUrl: `${frontendUrl}/register?cancelled=1`,
+          successUrl: `${frontendUrl}/register/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: `${frontendUrl}/register?cancelled=1`, 
         });
         res.json({ checkout_url: session.url });
     } catch (err) {
@@ -834,154 +876,240 @@ app.post("/api/register", async (req, res) => {
 // ── Stripe Webhook ─────────────────────────────────────────────────────────────
 
 app.post("/api/stripe/webhook", async (req, res) => {
-    const signature = req.headers['stripe-signature'];
-    if (!signature) {
-        logger.warn('[stripe webhook] missing stripe-signature header, ignoring');
-        return res.status(200).json({ received: true });
-    }
+  const signature = req.headers['stripe-signature'];
+  if (!signature) {
+    logger.warn('[stripe webhook] missing stripe-signature header, ignoring');
+    return res.status(200).json({ received: true });
+  }
 
-    let event;
-    try {
-        event = constructWebhookEvent(req.body, signature);
-    } catch (err) {
-        logger.error('[stripe webhook] signature verification failed:', err.message);
-        return res.status(200).json({ received: true });
-    }
+  let event;
+  try {
+    event = constructWebhookEvent(req.body, signature);
+  } catch (err) {
+    logger.error('[stripe webhook] signature verification failed:', err.message);
+    return res.status(200).json({ received: true });
+  }
 
-    const toIso = (ts) => (ts == null ? null : new Date(ts * 1000).toISOString());
+  const toIso = (ts) => (ts == null ? null : new Date(ts * 1000).toISOString());
 
-    if (event.type === 'checkout.session.completed') {
-        const session = event.data.object;
-        const meta = session.metadata || {};
-        const email = session.customer_email || meta.email;
-        const { owner_name, salon_name, phone, plan_id } = meta;
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const meta = session.metadata || {};
+    const email = session.customer_email || meta.email;
+    const { owner_name, salon_name, phone, plan_id, tenantId, action, oldPlanId, newPlanId } = meta;
 
-        if (!email || !owner_name || !salon_name) {
-            logger.warn('[stripe webhook] missing metadata in session:', session.id);
-            return res.json({ received: true });
-        }
+    // ✅ CHECK IF THIS IS AN UPGRADE
+    const isUpgrade = action === 'upgrade' || meta.is_upgrade === 'true' || (tenantId && tenantId !== 'undefined' && tenantId !== 'none');
 
-        // Idempotency: skip if tenant already exists
-        const superDb = getSuperDb();
-        const existing = superDb.prepare("SELECT id FROM salon_tenants WHERE email = ?").get(email);
-        if (existing) {
-            logger.info(`[stripe webhook] tenant already exists for ${email}, skipping`);
-            return res.json({ received: true });
-        }
+    if (isUpgrade && tenantId) {
+      // ✅ THIS IS AN UPGRADE - Update existing subscription
+      logger.info(`[stripe webhook] Processing UPGRADE for tenant: ${tenantId}`);
 
-        // Extract period dates — webhook payloads never expand nested objects,
-        // so session.subscription is always a string ID here regardless of the
-        // expand:['subscription'] flag on checkout session create.
+      try {
+        // Extract period dates from subscription
         let _periodStart = null;
         let _periodEnd = null;
         const subId = typeof session.subscription === 'object'
-            ? (session.subscription && session.subscription.id)
-            : session.subscription;
+          ? (session.subscription && session.subscription.id)
+          : session.subscription;
+
         if (subId) {
-            try {
-                const stripeSub = await retrieveSubscription(subId);
-                _periodStart = toIso(stripeSub.current_period_start);
-                _periodEnd = toIso(stripeSub.current_period_end);
-                logger.info(`[stripe webhook] subscription period: ${_periodStart} → ${_periodEnd}`);
-            } catch (subErr) {
-                logger.error(`[stripe webhook] failed to retrieve subscription ${subId}: ${subErr.message}`);
+          try {
+            const now = new Date();
+            _periodStart = now.toISOString();
+
+            // Calculate end date from plan's billing cycle
+            const planForDates = getPlanById(parseInt(newPlanId || plan_id, 10));
+            if (planForDates) {
+              const end = new Date(now);
+              if (planForDates.billing_cycle === 'yearly') {
+                end.setFullYear(end.getFullYear() + 1);
+              } else {
+                end.setMonth(end.getMonth() + 1);
+              }
+              _periodEnd = end.toISOString();
             }
-        } else {
-            logger.warn(`[stripe webhook] checkout.session.completed has no subscription ID`, session.id);
+
+            logger.info(`[stripe webhook] Calculated period on the fly: ${_periodStart} → ${_periodEnd}`);
+          } catch (subErr) {
+            logger.error(`Failed to calculate subscription period: ${subErr.message}`);
+          }
         }
 
-        // Create tenant + subscription row synchronously so the row exists before we return 200.
-        // This prevents the subscription.created race: if that event fires while setImmediate is
-        // pending the DB row doesn't exist yet, so it logs a warning and skips the date update.
-        const planIdNum = parseInt(plan_id || '0', 10);
-        let tenantId, generatedPassword;
-        try {
-            generatedPassword = crypto.randomBytes(8).toString('hex');
-            tenantId = await createTenant(owner_name, salon_name, email, phone || '', generatedPassword);
-            if (planIdNum) {
-                createSubscription(tenantId, planIdNum, subId || null,
-                    session.customer || null, _periodStart, _periodEnd);
-            } else {
-                logger.warn(`[stripe webhook] no valid plan_id in metadata for session ${session.id}, subscription not created`);
-            }
-            logger.info(`[stripe webhook] tenant ${tenantId} created for ${email} with plan ${planIdNum}`);
-        } catch (err) {
-            logger.error(`[stripe webhook] tenant creation error:`, err.message);
+        // Update existing subscription with period dates
+        const newPlanIdNum = parseInt(newPlanId || plan_id, 10);
+        updateSubscriptionByTenantId(tenantId, {
+          planId: newPlanIdNum,
+          status: 'active',
+          currentPeriodStart: _periodStart,
+          currentPeriodEnd: _periodEnd,
+        });
+
+        // Apply service freeze/unfreeze
+        const newPlan = getPlanById(newPlanIdNum);
+        if (newPlan && newPlan.max_services !== undefined) {
+          freezeExcessServices(tenantId, newPlan.max_services);
+          unfreezeServices(tenantId, newPlan.max_services);
         }
 
-        // Defer only the email — slow, non-critical, safe to run after 200
-        if (tenantId && generatedPassword) {
-            setImmediate(async () => {
-                try {
-                    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
-                    await sendWelcomeEmail({
-                        to: email, ownerName: owner_name, salonName: salon_name,
-                        email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
-                    });
-                } catch (err) {
-                    logger.error(`[stripe webhook] welcome email error:`, err.message);
-                }
-            });
+        // Send upgrade confirmation email
+        const tenant = getTenantById(tenantId);
+        if (tenant) {
+          const oldPlan = getPlanById(parseInt(oldPlanId || '0', 10));
+          await sendPlanUpgradeEmail({
+            to: tenant.email,
+            ownerName: tenant.owner_name,
+            salonName: tenant.salon_name,
+            oldPlanName: oldPlan?.name || "Unknown",
+            newPlanName: newPlan?.name || "Unknown",
+            amount: `$${(newPlan?.price_cents || 0) / 100}`,
+            billingCycle: newPlan?.billing_cycle || "monthly",
+            nextBillingDate: _periodEnd ? new Date(_periodEnd).toLocaleDateString() : new Date().toLocaleDateString(),
+          }).catch(err => logger.error("[email] upgrade error:", err.message));
         }
-    }
-    else if (event.type === 'customer.subscription.created') {
-        const sub = event.data.object;
-        try {
-            const superDb = getSuperDb();
-            const existing = superDb.prepare('SELECT id FROM subscriptions WHERE stripe_subscription_id = ?').get(sub.id);
-            if (existing) {
-                updateSubscription(sub.id, {
-                    currentPeriodStart: toIso(sub.current_period_start),
-                    currentPeriodEnd: toIso(sub.current_period_end),
-                });
-                logger.info(`[stripe webhook] subscription.created: period dates written for ${sub.id}`);
-            } else {
-                logger.warn(`[stripe webhook] subscription.created: no DB row found for ${sub.id} (checkout.session.completed pending)`);
-            }
-        } catch (err) {
-            logger.error(`[stripe webhook] subscription.created handler error:`, err.message);
-        }
-    }
-    else if (event.type === 'customer.subscription.updated') {
-        const sub = event.data.object;
-        try {
-            const superDb = getSuperDb();
-            const row = superDb.prepare('SELECT tenant_id, plan_id FROM subscriptions WHERE stripe_subscription_id = ?').get(sub.id);
-            if (!row) {
-                logger.warn(`[stripe webhook] subscription.updated: no DB row found for ${sub.id}`);
-            } else {
-                let newPlanId;
-                const stripePriceId = sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].price && sub.items.data[0].price.id;
-                if (stripePriceId) {
-                    const planByPrice = superDb.prepare('SELECT id FROM plans WHERE stripe_price_id = ?').get(stripePriceId);
-                    if (planByPrice && planByPrice.id !== row.plan_id) newPlanId = planByPrice.id;
-                }
-                updateSubscription(sub.id, {
-                    planId: newPlanId,
-                    status: sub.status,
-                    currentPeriodStart: toIso(sub.current_period_start),
-                    currentPeriodEnd: toIso(sub.current_period_end),
-                });
-                logger.info(`[stripe webhook] subscription.updated: ${sub.id} status=${sub.status}${newPlanId ? ` planId=${newPlanId}` : ''}`);
-            }
-        } catch (err) {
-            logger.error(`[stripe webhook] subscription.updated handler error:`, err.message);
-        }
-    }
-    else if (event.type === 'customer.subscription.deleted') {
-        const sub = event.data.object;
-        try {
-            const cancellationDate = toIso(sub.canceled_at) || new Date().toISOString();
-            cancelSubscription(sub.id, cancellationDate);
-            logger.info(`[stripe webhook] subscription.deleted: ${sub.id} canceled at ${cancellationDate}`);
-        } catch (err) {
-            logger.error(`[stripe webhook] subscription.deleted handler error:`, err.message);
-        }
+
+        logger.info(`[stripe webhook] Successfully upgraded tenant ${tenantId} to plan ${newPlanIdNum}`);
+      } catch (err) {
+        logger.error(`[stripe webhook] Upgrade failed for tenant ${tenantId}:`, err.message);
+      }
+
+      return res.json({ received: true });
     }
 
-    res.json({ received: true });
+    // ✅ IF NOT AN UPGRADE, process as new registration
+    if (!email || !owner_name || !salon_name) {
+      logger.warn('[stripe webhook] missing metadata in session:', session.id);
+      return res.json({ received: true });
+    }
+
+    // Idempotency: skip if tenant already exists
+    const superDb = getSuperDb();
+    const existing = superDb.prepare("SELECT id FROM salon_tenants WHERE email = ?").get(email);
+    if (existing) {
+      logger.info(`[stripe webhook] tenant already exists for ${email}, skipping`);
+      return res.json({ received: true });
+    }
+
+    // Extract period dates for new registration
+    let _periodStart = null;
+    let _periodEnd = null;
+    const subId = typeof session.subscription === 'object'
+      ? (session.subscription && session.subscription.id)
+      : session.subscription;
+    if (subId) {
+      try {
+        const stripeSub = await retrieveSubscription(subId);
+        _periodStart = toIso(stripeSub.current_period_start);
+        _periodEnd = toIso(stripeSub.current_period_end);
+        logger.info(`[stripe webhook] New registration subscription period: ${_periodStart} → ${_periodEnd}`);
+      } catch (subErr) {
+        logger.error(`[stripe webhook] failed to retrieve subscription ${subId}: ${subErr.message}`);
+      }
+    } else {
+      logger.warn(`[stripe webhook] checkout.session.completed has no subscription ID`, session.id);
+    }
+
+    // Create tenant + subscription row for new registration
+    const planIdNum = parseInt(plan_id || '0', 10);
+    let newTenantId, generatedPassword;  // ✅ Changed variable name to avoid conflict
+    try {
+      generatedPassword = crypto.randomBytes(8).toString('hex');
+      newTenantId = await createTenant(owner_name, salon_name, email, phone || '', generatedPassword);
+      if (planIdNum) {
+        createSubscription(newTenantId, planIdNum, subId || null,
+          session.customer || null, _periodStart, _periodEnd);
+      } else {
+        logger.warn(`[stripe webhook] no valid plan_id in metadata for session ${session.id}, subscription not created`);
+      }
+      logger.info(`[stripe webhook] New tenant ${newTenantId} created for ${email} with plan ${planIdNum}`);
+    } catch (err) {
+      logger.error(`[stripe webhook] tenant creation error:`, err.message);
+    }
+
+    // Send welcome email
+    if (newTenantId && generatedPassword) {
+      setImmediate(async () => {
+        try {
+          const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+          await sendWelcomeEmail({
+            to: email, ownerName: owner_name, salonName: salon_name,
+            email, password: generatedPassword, loginUrl: `${frontendUrl}/login`,
+          });
+        } catch (err) {
+          logger.error(`[stripe webhook] welcome email error:`, err.message);
+        }
+      });
+    }
+  }
+  else if (event.type === 'customer.subscription.created') {
+    const sub = event.data.object;
+    try {
+      const superDb = getSuperDb();
+      const existing = superDb.prepare('SELECT id FROM subscriptions WHERE stripe_subscription_id = ?').get(sub.id);
+      if (existing) {
+        updateSubscription(sub.id, {
+          currentPeriodStart: toIso(sub.current_period_start),
+          currentPeriodEnd: toIso(sub.current_period_end),
+        });
+        logger.info(`[stripe webhook] subscription.created: period dates written for ${sub.id}`);
+      } else {
+        logger.warn(`[stripe webhook] subscription.created: no DB row found for ${sub.id} (checkout.session.completed pending)`);
+      }
+    } catch (err) {
+      logger.error(`[stripe webhook] subscription.created handler error:`, err.message);
+    }
+  }
+  else if (event.type === 'customer.subscription.updated') {
+    const sub = event.data.object;
+    try {
+      const superDb = getSuperDb();
+      const row = superDb.prepare('SELECT tenant_id, plan_id FROM subscriptions WHERE stripe_subscription_id = ?').get(sub.id);
+      if (!row) {
+        logger.warn(`[stripe webhook] subscription.updated: no DB row found for ${sub.id}`);
+      } else {
+        let newPlanId;
+        const stripePriceId = sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].price && sub.items.data[0].price.id;
+        if (stripePriceId) {
+          const planByPrice = superDb.prepare('SELECT id FROM plans WHERE stripe_price_id = ?').get(stripePriceId);
+          if (planByPrice && planByPrice.id !== row.plan_id) newPlanId = planByPrice.id;
+        }
+        updateSubscription(sub.id, {
+          planId: newPlanId,
+          status: sub.status,
+          currentPeriodStart: toIso(sub.current_period_start),
+          currentPeriodEnd: toIso(sub.current_period_end),
+        });
+
+        // If plan changed, apply service freeze/unfreeze
+        if (newPlanId) {
+          const tenant = getTenantById(row.tenant_id);
+          const newPlan = getPlanById(newPlanId);
+          if (tenant && newPlan && newPlan.max_services !== undefined) {
+            freezeExcessServices(row.tenant_id, newPlan.max_services);
+            unfreezeServices(row.tenant_id, newPlan.max_services);
+            logger.info(`[stripe webhook] Applied service limits for tenant ${row.tenant_id} (max_services=${newPlan.max_services})`);
+          }
+        }
+
+        logger.info(`[stripe webhook] subscription.updated: ${sub.id} status=${sub.status}${newPlanId ? ` planId=${newPlanId}` : ''}`);
+      }
+    } catch (err) {
+      logger.error(`[stripe webhook] subscription.updated handler error:`, err.message);
+    }
+  }
+  else if (event.type === 'customer.subscription.deleted') {
+    const sub = event.data.object;
+    try {
+      const cancellationDate = toIso(sub.canceled_at) || new Date().toISOString();
+      cancelSubscription(sub.id, cancellationDate);
+      logger.info(`[stripe webhook] subscription.deleted: ${sub.id} canceled at ${cancellationDate}`);
+    } catch (err) {
+      logger.error(`[stripe webhook] subscription.deleted handler error:`, err.message);
+    }
+  }
+
+  res.json({ received: true });
 });
-
 // ─────────────────────────────────────────────────────────────────────────────
 //  Salon Admin — Auth
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2325,6 +2453,209 @@ app.put("/salon-admin/api/cors-origin", requireTenantAuth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Salon Admin — Current Subscription Details
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/salon-admin/api/subscription/current", requireTenantAuth, (req, res) => {
+  try {
+    const sub = getTenantSubscription(req.tenantId);
+    
+    // Always return a valid response, never undefined
+    if (!sub) {
+      return res.json({
+        id: null,
+        planId: null,
+        planName: "Free",
+        priceCents: 0,
+        billingCycle: "monthly",
+        status: "active",
+        currentPeriodEnd: null,
+        remainingDays: null,
+        remainingDaysText: null,
+        features: {
+          maxServices: 5,
+          whatsappAccess: false,
+          instagramAccess: false,
+          facebookAccess: false,
+          aiCallsAccess: false,
+          widgetAccess: false,
+        }
+      });
+    }
+
+    // Get plan details
+    const plan = getPlanById(sub.plan_id);
+    
+    const response = {
+      id: sub.id,
+      planId: sub.plan_id,
+      planName: plan?.name || "Unknown",
+      priceCents: plan?.price_cents || 0,
+      billingCycle: plan?.billing_cycle || "monthly",
+      status: sub.status || "active",
+      currentPeriodEnd: sub.current_period_end || null,
+      remainingDays: sub.remaining_days || null,
+      remainingDaysText: sub.remaining_days_text || null,
+      features: {
+        maxServices: plan?.max_services || 5,
+        whatsappAccess: plan?.whatsapp_access === 1,
+        instagramAccess: plan?.instagram_access === 1,
+        facebookAccess: plan?.facebook_access === 1,
+        aiCallsAccess: plan?.ai_calls_access === 1,
+        widgetAccess: plan?.widget_access === 1,
+      }
+    };
+    
+    res.json(response);
+  } catch (err) {
+    logger.error("[subscription/current] Error:", err.message);
+    // Always return a valid response even on error
+    res.json({
+      id: null,
+      planId: null,
+      planName: "Free",
+      priceCents: 0,
+      billingCycle: "monthly",
+      status: "active",
+      currentPeriodEnd: null,
+      remainingDays: null,
+      remainingDaysText: null,
+      features: {
+        maxServices: 5,
+        whatsappAccess: false,
+        instagramAccess: false,
+        facebookAccess: false,
+        aiCallsAccess: false,
+        widgetAccess: false,
+      }
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Salon Admin — Upgrade/Downgrade Subscription
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.post("/salon-admin/api/subscription/upgrade", requireTenantAuth, async (req, res) => {
+  try {
+    const { plan_id } = req.body;
+
+    if (!plan_id) {
+      return res.status(400).json({ error: "plan_id is required" });
+    }
+
+    const planIdNum = parseInt(plan_id, 10);
+    if (isNaN(planIdNum) || planIdNum <= 0) {
+      return res.status(400).json({ error: "plan_id must be a positive integer" });
+    }
+
+    // Get current subscription
+    const currentSub = getTenantSubscription(req.tenantId);
+    const newPlan = getPlanById(planIdNum);
+
+    if (!newPlan) {
+      return res.status(404).json({ error: "Plan not found" });
+    }
+
+    // Check if trying to switch to same plan
+    if (currentSub && currentSub.plan_id === planIdNum) {
+      return res.status(400).json({ error: "Already on this plan" });
+    }
+
+    // For free plan or downgrade (to cheaper or free plan) - update immediately
+    if (newPlan.price_cents === 0 ||
+      (currentSub && newPlan.price_cents < currentSub.price_cents)) {
+
+      // Update subscription
+      updateSubscriptionByTenantId(req.tenantId, {
+        planId: planIdNum,
+        status: 'active',
+        updatedAt: new Date().toISOString()
+      });
+
+      // Apply service freeze/unfreeze based on new max_services limit
+      if (newPlan.max_services !== undefined) {
+        freezeExcessServices(req.tenantId, newPlan.max_services);
+        unfreezeServices(req.tenantId, newPlan.max_services);
+      }
+
+      // Send downgrade email notification
+      const tenant = getTenantById(req.tenantId);
+      if (tenant && currentSub && newPlan.price_cents < currentSub.price_cents) {
+        const oldPlan = getPlanById(currentSub.plan_id);
+        try {
+          await sendPlanDowngradeEmail({
+            to: tenant.email,
+            ownerName: tenant.owner_name,
+            salonName: tenant.salon_name,
+            oldPlanName: oldPlan?.name || "Unknown",
+            newPlanName: newPlan.name,
+            effectiveDate: new Date().toLocaleDateString(),
+          });
+        } catch (emailErr) {
+          logger.error("[email] downgrade error:", emailErr.message);
+        }
+      }
+
+      // Invalidate cache for this tenant
+      try {
+        await patchCache(req.tenantId, "subscription", "replace", { planId: planIdNum });
+      } catch (e) {
+        logger.error("[cache] subscription update:", e.message);
+      }
+
+      logger.info(`[subscription] Tenant ${req.tenantId} ${currentSub?.price_cents > newPlan.price_cents ? 'downgraded' : 'changed'} to plan ${newPlan.name} (${newPlan.price_cents === 0 ? 'free' : 'paid'})`);
+
+      return res.json({
+        success: true,
+        message: `Plan ${currentSub?.price_cents > newPlan.price_cents ? 'downgraded' : 'updated'} successfully`
+      });
+    }
+
+    // For upgrade to paid plan - create Stripe checkout session
+    if (!newPlan.stripe_price_id) {
+      return res.status(400).json({
+        error: "This plan is not yet available for purchase. Please contact support."
+      });
+    }
+
+    // Get tenant details for checkout
+    const tenant = getTenantById(req.tenantId);
+    if (!tenant) {
+      return res.status(404).json({ error: "Tenant not found" });
+    }
+
+    // Get Stripe customer ID from existing subscription if available
+    let stripeCustomerId = null;
+    if (currentSub && currentSub.stripe_customer_id) {
+      stripeCustomerId = currentSub.stripe_customer_id;
+    }
+
+    // ✅ FIXED: Use createUpgradeCheckoutSession instead of createCheckoutSession
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
+
+    const session = await createUpgradeCheckoutSession({
+      planId: newPlan.id,
+      stripePriceId: newPlan.stripe_price_id,
+      email: tenant.email,
+      ownerName: tenant.owner_name,
+      salonName: tenant.salon_name,
+      phone: tenant.phone,
+      successUrl: `${frontendUrl}/success?session_id={CHECKOUT_SESSION_ID}&upgrade=true`,
+      cancelUrl: `${frontendUrl}/salon-admin/dashboard?tab=plan&upgrade_cancelled=true`,
+      stripeCustomerId: stripeCustomerId,
+      tenantId: req.tenantId,
+      oldPlanId: currentSub?.plan_id?.toString() || 'none',  // ✅ Add this
+    });
+
+    res.json({ checkout_url: session.url });
+
+  } catch (err) {
+    logger.error("[subscription/upgrade] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Salon Admin — Webhook Config (per-tenant platform credentials)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2995,6 +3326,98 @@ async function runJobsForAllTenants() {
   }
 }
 
+
+
+// In index.js - Add for testing
+app.post("/test-email", async (req, res) => {
+  try {
+    const { sendPlanUpgradeEmail } = require('./services/emailService');
+    await sendPlanUpgradeEmail({
+      to: "test@example.com",
+      ownerName: "Test Owner",
+      salonName: "Test Salon",
+      oldPlanName: "Free",
+      newPlanName: "Pro",
+      amount: "$20",
+      billingCycle: "month",
+      nextBillingDate: new Date().toLocaleDateString(),
+    });
+    res.json({ success: true, message: "Email sent" });
+  } catch (err) {
+    console.error("Email error:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// In index.js - Add this to test Gmail directly
+app.get("/test-gmail-connection", async (req, res) => {
+  const nodemailer = require('nodemailer');
+
+  const config = {
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    secure: process.env.SMTP_PORT === '465',
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  };
+
+  console.log("Testing Gmail with config:", {
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    user: config.auth.user,
+    hasPass: !!config.auth.pass
+  });
+
+  try {
+    const transporter = nodemailer.createTransport(config);
+
+    // Verify connection
+    await transporter.verify();
+    console.log("✅ SMTP connection successful");
+
+    // Try to send a test email
+    const info = await transporter.sendMail({
+      from: process.env.SMTP_FROM || `"Test" <${config.auth.user}>`,
+      to: config.auth.user,
+      subject: "Gmail SMTP Test - " + new Date().toLocaleString(),
+      text: "If you receive this, your email is working!",
+      html: "<h1>✅ Success!</h1><p>Your Gmail SMTP configuration is working correctly.</p>",
+    });
+
+    console.log("✅ Email sent:", info.messageId);
+    res.json({
+      success: true,
+      message: "Email sent! Check your inbox",
+      messageId: info.messageId
+    });
+
+  } catch (err) {
+    console.error("❌ Email error:", err.message);
+    res.json({
+      success: false,
+      error: err.message,
+      code: err.code,
+      command: err.command
+    });
+  }
+});
+
+app.get("/check-app-password", async (req, res) => {
+  const { google } = require('googleapis');
+
+  const oauth2Client = new google.auth.OAuth2();
+  oauth2Client.setCredentials({
+    refresh_token: process.env.GMAIL_REFRESH_TOKEN // Not applicable for App Password
+  });
+
+  res.json({
+    message: "App Password authentication is tested via SMTP, not OAuth",
+    test_endpoint: "/test-gmail-connection"
+  });
+});
 // ─────────────────────────────────────────────────────────────────────────────
 //  Server startup
 // ─────────────────────────────────────────────────────────────────────────────
