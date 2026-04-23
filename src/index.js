@@ -1717,6 +1717,144 @@ app.delete("/salon-admin/api/bookings/:id", requireTenantAuth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Salon Admin — Analytics Clients (clients with their booked services)
+//  GET /salon-admin/api/analytics/clients?branch=&period=week&from=&to=&status=completed&tz=Asia/Karachi
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get("/salon-admin/api/analytics/clients", requireTenantAuth, (req, res) => {
+  const tenantId = req.tenantId;
+  const db = getDb();
+  const { branch, from, to, status = "completed", period, tz = "UTC" } = req.query;
+
+  const statuses = status.split(",").map((s) => s.trim()).filter(Boolean);
+
+  // Compute date range from period using salon timezone
+  let rangeFrom = from || null;
+  let rangeTo = to || null;
+  const serverTime = new Date().toISOString();
+
+  if (period && !from && !to) {
+    try {
+      const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: tz });
+
+      if (period === "day") {
+        rangeFrom = todayStr;
+        rangeTo = todayStr;
+      } else if (period === "week") {
+        const d = new Date(todayStr);
+        d.setDate(d.getDate() - d.getDay());
+        rangeFrom = d.toISOString().slice(0, 10);
+        rangeTo = todayStr;
+      } else if (period === "month") {
+        rangeFrom = todayStr.slice(0, 7) + "-01";
+        rangeTo = todayStr;
+      } else if (period === "year") {
+        rangeFrom = todayStr.slice(0, 4) + "-01-01";
+        rangeTo = todayStr;
+      }
+    } catch {
+      // period ignored if tz is invalid
+    }
+  }
+
+  // Build WHERE clause
+  const statusPlaceholders = statuses.map(() => "?").join(",");
+  let sql = `SELECT b.customer_name, b.phone, b.service, b.branch, b.date, b.time, b.status, 
+                    b.staff_name, s.price AS service_price
+             FROM ${tenantId}_bookings b
+             LEFT JOIN ${tenantId}_services s ON b.service = s.name
+             WHERE b.status IN (${statusPlaceholders})`;
+  const args = [...statuses];
+
+  if (branch && branch !== "all") { sql += " AND b.branch = ?"; args.push(branch); }
+  if (rangeFrom) { sql += " AND b.date >= ?"; args.push(rangeFrom); }
+  if (rangeTo) { sql += " AND b.date <= ?"; args.push(rangeTo); }
+
+  sql += " ORDER BY b.date DESC, b.time DESC";
+
+  const bookings = db.prepare(sql).all(...args);
+
+  // Group by client (phone as unique key)
+  const clientMap = new Map();
+
+  for (const b of bookings) {
+    const key = b.phone || `__name_${b.customer_name}`;
+
+    if (!clientMap.has(key)) {
+      clientMap.set(key, {
+        customer_name: b.customer_name,
+        phone: b.phone || null,
+        services: [],      // Array of { name, count, revenue }
+        bookings: [],      // Array of individual booking records
+        totalBookings: 0,
+        totalSpent: 0,
+        lastVisit: b.date,
+        firstVisit: b.date,
+        branches: new Set(),
+      });
+    }
+
+    const client = clientMap.get(key);
+    const price = parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
+
+    // Add to services summary
+    const existingSvc = client.services.find(s => s.name === b.service);
+    if (existingSvc) {
+      existingSvc.count++;
+      existingSvc.revenue += price;
+    } else {
+      client.services.push({
+        name: b.service,
+        count: 1,
+        revenue: price,
+      });
+    }
+
+    // Add individual booking record
+    client.bookings.push({
+      date: b.date,
+      time: b.time,
+      service: b.service,
+      branch: b.branch,
+      staff_name: b.staff_name,
+      price: price,
+    });
+
+    client.totalBookings++;
+    client.totalSpent += price;
+    if (b.date > client.lastVisit) client.lastVisit = b.date;
+    if (b.date < client.firstVisit) client.firstVisit = b.date;
+    if (b.branch) client.branches.add(b.branch);
+  }
+
+  // Convert to array, sort by totalSpent desc, then by totalBookings
+  const clients = [...clientMap.values()]
+    .map(c => ({
+      ...c,
+      branches: [...c.branches],
+    }))
+    .sort((a, b) => b.totalSpent - a.totalSpent || b.totalBookings - a.totalBookings);
+
+  // Calculate summary stats
+  const totalRevenue = clients.reduce((sum, c) => sum + c.totalSpent, 0);
+  const avgSpendPerClient = clients.length > 0 ? totalRevenue / clients.length : 0;
+  const newClients = clients.filter(c => c.firstVisit === c.lastVisit).length;
+  const returningClients = clients.length - newClients;
+
+  res.json({
+    clients,
+    totalClients: clients.length,
+    totalRevenue,
+    avgSpendPerClient: Math.round(avgSpendPerClient),
+    newClients,
+    returningClients,
+    queryRange: { start: rangeFrom, end: rangeTo, tz },
+    filtersApplied: { statuses, branch: branch || null, period: period || null },
+    dataFreshAsOf: serverTime,
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Salon Admin — Clients & Customer Analytics
 // ─────────────────────────────────────────────────────────────────────────────
 
