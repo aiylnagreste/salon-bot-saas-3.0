@@ -3,6 +3,7 @@ const { getDb } = require('../db/database');
 const { getBranches } = require('./branches');
 
 const { patchCache } = require('../cache/salonDataCache');
+const { isValidPhone: sharedIsValidPhone, normalizePhone } = require('../utils/phone');
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -222,10 +223,10 @@ function extractPhone(text) {
   return digits || cleaned;
 }
 
-// Validates phone: 7–15 digits, optional leading +
+// Validates phone: delegates to shared E.164-compatible util (8–15 digits, optional leading '+').
+// extractPhone strips conversational lead-ins ("mera number", "نمبر") first.
 function isValidPhone(text) {
-  const t = extractPhone(text.trim());
-  return /^\+?[0-9]{7,15}$/.test(t);
+  return sharedIsValidPhone(extractPhone(text.trim()));
 }
 
 // Extracts date keyword or date string from conversational speech
@@ -437,9 +438,9 @@ function handleCancellationFlow(userId, text, session, platform, tenantId) {
 
   if (session.state === 'CANCEL_ASK_PHONE') {
     if (!isValidPhone(text)) {
-      return "Please enter a valid phone number (digits only, 7-15 characters).";
+      return "Please enter a valid phone number (8 to 15 digits).";
     }
-    const phone = extractPhone(text.trim());
+    const phone = normalizePhone(extractPhone(text.trim())) || extractPhone(text.trim());
 
     const db = getDb();
     const bookings = db.prepare(`
@@ -575,9 +576,9 @@ function handleRescheduleFlow(userId, text, session, platform, tenantId) {
 
   if (session.state === 'RESCHEDULE_ASK_PHONE') {
     if (!isValidPhone(text)) {
-      return "Please enter a valid phone number (digits only, 7-15 characters).";
+      return "Please enter a valid phone number (8 to 15 digits).";
     }
-    const phone = extractPhone(text.trim());
+    const phone = normalizePhone(extractPhone(text.trim())) || extractPhone(text.trim());
 
     const db = getDb();
     const bookings = db.prepare(`
@@ -819,14 +820,16 @@ function handleBookingStep(userId, text, session, platform, tenantId) {
   // STEP 3: Got phone → ask service
   if (session.state === 'ASK_PHONE') {
     if (!isValidPhone(text)) {
-      return '⚠️ Please enter a valid *phone number* (digits only, 7–15 characters).';
+      return '⚠️ Please enter a valid *phone number* (8 to 15 digits).';
     }
     const services = getServiceNames(tenantId);
     if (!services.length) {
       clearSession(userId, tenantId);
       return 'Sorry, no services are available right now. Please contact us directly.';
     }
-    setSession(userId, tenantId, { ...session, state: 'ASK_SERVICE', phone: extractPhone(text.trim()) });
+    const extractedPhone = extractPhone(text.trim());
+    const normalizedStoredPhone = normalizePhone(extractedPhone) || extractedPhone;
+    setSession(userId, tenantId, { ...session, state: 'ASK_SERVICE', phone: normalizedStoredPhone });
     return (
       '✅ Got it!\n\nWhich *service* would you like?\n\n' +
       services.map((s, i) => `  *${i + 1}.* ${s}`).join('\n') +

@@ -2,6 +2,7 @@ const { WebSocketServer } = require('ws');
 const { GoogleGenAI, Modality } = require('@google/genai');
 const { getDb } = require('../db/database');
 const { getCache, patchCache } = require('../cache/salonDataCache');
+const { isValidPhone, normalizePhone } = require('../utils/phone');
 
 // ── Voice tool implementations ──────────────────────────────────────────────
 
@@ -114,6 +115,11 @@ async function handleVoiceTool(name, args, tenantId) {
         if (!custName || !phone || !service || !branch || !date || !time) {
             return 'Missing required fields. Need: name, phone, service, branch, date, time.';
         }
+
+        if (!isValidPhone(phone)) {
+            return 'Phone number must be 8 to 15 digits. Please ask the caller for a valid phone number.';
+        }
+        const normalizedPhone = normalizePhone(phone);
 
         const normalizedDate = normalizeDateToISO(date);
 
@@ -276,7 +282,7 @@ async function handleVoiceTool(name, args, tenantId) {
         const insertResult = db.prepare(`
             INSERT INTO ${tenantId}_bookings (customer_name, phone, service, branch, date, time, endTime, status, source, staff_id, staff_name)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 'voice', ?, ?)
-        `).run(custName.trim(), phone.trim(), svcRow.name, brRow.name, normalizedDate, time.trim(), endTime, staffId, staffNameSaved);
+        `).run(custName.trim(), normalizedPhone, svcRow.name, brRow.name, normalizedDate, time.trim(), endTime, staffId, staffNameSaved);
 
         const newBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(insertResult.lastInsertRowid);
         if (newBooking) patchCache('bookings', 'upsert', newBooking).catch(err => console.error('[cache] voice booking patch:', err.message));
@@ -291,17 +297,19 @@ async function handleVoiceTool(name, args, tenantId) {
         const { phone, confirm, booking_index } = args;
 
         if (!phone) return 'Phone number is required to cancel a booking.';
+        if (!isValidPhone(phone)) return 'Please provide a valid phone number (8 to 15 digits).';
+        const phoneNorm = normalizePhone(phone);
 
         const db = getDb();
 
         // STEP 1: List bookings (when confirm is not provided)
         if (!confirm) {
             const bookings = db.prepare(`
-            SELECT id, date, time, service, branch 
-            FROM ${tenantId}_bookings 
+            SELECT id, date, time, service, branch
+            FROM ${tenantId}_bookings
             WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
             ORDER BY date, time
-        `).all(phone);
+        `).all(phoneNorm);
 
             if (bookings.length === 0) {
                 return 'NO_BOOKINGS';
@@ -318,11 +326,11 @@ async function handleVoiceTool(name, args, tenantId) {
         // STEP 2: Execute cancellation (when caller confirms)
         if (confirm === 'true') {
             const bookings = db.prepare(`
-            SELECT id, date, time, service, branch 
-            FROM ${tenantId}_bookings 
+            SELECT id, date, time, service, branch
+            FROM ${tenantId}_bookings
             WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
             ORDER BY date, time
-        `).all(phone);
+        `).all(phoneNorm);
 
             if (bookings.length === 0) {
                 return 'NO_BOOKINGS';
@@ -360,7 +368,7 @@ async function handleVoiceTool(name, args, tenantId) {
             ON CONFLICT(phone) DO UPDATE SET
                 cancellations = cancellations + 1,
                 updated_at = datetime('now')
-        `).run(phone);
+        `).run(phoneNorm);
 
             // Update cache
             const updatedBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(booking.id);
@@ -376,6 +384,8 @@ async function handleVoiceTool(name, args, tenantId) {
         const { phone, new_date, new_time, confirm, booking_index } = args;
 
         if (!phone) return 'Phone number is required to reschedule a booking.';
+        if (!isValidPhone(phone)) return 'Please provide a valid phone number (8 to 15 digits).';
+        const phoneNorm = normalizePhone(phone);
 
         const db = getDb();
 
@@ -383,10 +393,10 @@ async function handleVoiceTool(name, args, tenantId) {
         if (!new_date) {
             const bookings = db.prepare(`
             SELECT id, date, time, service, branch, staff_id, staff_name
-            FROM ${tenantId}_bookings 
+            FROM ${tenantId}_bookings
             WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
             ORDER BY date, time
-        `).all(phone);
+        `).all(phoneNorm);
 
             if (bookings.length === 0) {
                 return 'NO_BOOKINGS';
@@ -441,10 +451,10 @@ async function handleVoiceTool(name, args, tenantId) {
         if (!confirm) {
             const bookings = db.prepare(`
             SELECT id, customer_name, service, branch, date, time, staff_id, staff_name, notes
-            FROM ${tenantId}_bookings 
+            FROM ${tenantId}_bookings
             WHERE phone = ? AND status = 'confirmed' AND date >= date('now')
             ORDER BY date, time
-        `).all(phone);
+        `).all(phoneNorm);
 
             if (bookings.length === 0) {
                 return 'NO_BOOKINGS';
@@ -769,7 +779,7 @@ BOOKING (when caller wants to book an appointment):
 1. Immediately call get_services AND get_branches so you know what is available.
 2. Collect these required fields — use values the caller already mentioned, ask only for missing ones:
    • name    — caller's name (e.g. "Alyan")
-   • phone   — digits only, no spaces (e.g. "03001234567")
+   • phone   — 8 to 15 digits, optional leading '+', no spaces (e.g. "03001234567")
    • service — must exactly match a name returned by get_services
    • branch  — must exactly match a name returned by get_branches
    • date    — accept any natural date the caller gives ("kal", "Friday", "30 April") and YOU convert it internally. NEVER ask the caller to type a date in any specific format. Reject past dates — ask them to choose today or a future date.

@@ -13,6 +13,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
 const logger = require("./utils/logger");
+const { isValidPhone, normalizePhone } = require("./utils/phone");
 const { initializeAllTenants, getDb, invalidateSettingsCache } = require("./db/database");
 const { setupCallServer } = require("./server/apiCallLive.js");
 const { initCache, getCache, patchCache } = require("./cache/salonDataCache");
@@ -257,6 +258,7 @@ function validateBookingBody(body, isEdit = false) {
   const errs = [];
   if (!customer_name?.trim()) errs.push("customer_name");
   if (!phone?.trim()) errs.push("phone");
+  else if (!isValidPhone(phone)) errs.push("phone (must be 8-15 digits, optional leading '+')");
   if (!service?.trim()) errs.push("service");
   if (!branch?.trim()) errs.push("branch");
   if (!time?.trim()) errs.push("time");
@@ -829,6 +831,10 @@ app.post("/api/register", async (req, res) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
         return res.status(400).json({ error: 'Invalid email address' });
 
+    if (!isValidPhone(phone))
+        return res.status(400).json({ error: 'Invalid phone number (must be 8-15 digits, optional leading +).' });
+    const normalizedRegPhone = normalizePhone(phone);
+
     const superDb = getSuperDb();
     const existing = superDb.prepare("SELECT id FROM salon_tenants WHERE email = ?").get(email);
     if (existing) return res.status(409).json({ error: 'An account with this email already exists' });
@@ -841,7 +847,7 @@ app.post("/api/register", async (req, res) => {
     if (plan.price_cents === 0) {
         try {
             const generatedPassword = crypto.randomBytes(8).toString('hex');
-            const tenantId = await createTenant(owner_name, salon_name, email, phone, generatedPassword);
+            const tenantId = await createTenant(owner_name, salon_name, email, normalizedRegPhone, generatedPassword);
             createSubscription(tenantId, plan.id, null, null, null, null);
             const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3002';
             sendWelcomeEmail({
@@ -864,9 +870,9 @@ app.post("/api/register", async (req, res) => {
         const session = await createCheckoutSession({
             planId: plan.id,
             stripePriceId: plan.stripe_price_id,
-            email, ownerName: owner_name, salonName: salon_name, phone,
+            email, ownerName: owner_name, salonName: salon_name, phone: normalizedRegPhone,
           successUrl: `${frontendUrl}/register/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancelUrl: `${frontendUrl}/register?cancelled=1`, 
+          cancelUrl: `${frontendUrl}/register?cancelled=1`,
         });
         res.json({ checkout_url: session.url });
     } catch (err) {
@@ -1511,7 +1517,7 @@ app.post("/salon-admin/api/bookings", requireTenantAuth, (req, res) => {
       (customer_name, phone, service, branch, date, time, endTime, notes, status, source, staff_id, staff_name, staffRequested)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 'manual', ?, ?, ?)
   `).run(
-    customer_name.trim(), phone.trim(), service.trim(), branch.trim(),
+    customer_name.trim(), (normalizePhone(phone) || phone.trim()), service.trim(), branch.trim(),
     date.trim(), time.trim(), endTime, notes || null,
     staff_id || null, staff_name || null, staffRequested
   );
@@ -1580,7 +1586,7 @@ app.put("/salon-admin/api/bookings/:id", requireTenantAuth, (req, res) => {
         notes=?, status=?, staff_id=?, staff_name=?, staffRequested=?, updated_at=datetime('now')
     WHERE id=?
   `).run(
-    customer_name.trim(), phone.trim(), service.trim(), branch.trim(),
+    customer_name.trim(), (normalizePhone(phone) || phone.trim()), service.trim(), branch.trim(),
     date.trim(), time.trim(), endTime, notes || null,
     status || "confirmed", staff_id || null, staff_name || null, staffRequested,
     bookingId
@@ -1788,6 +1794,7 @@ app.post("/salon-admin/api/settings/branches", requireTenantAuth, (req, res) => 
   if (!address?.trim()) errs.push("address");
   if (!map_link?.trim() || !map_link.trim().startsWith("http")) errs.push("map_link (must start with http)");
   if (!phone?.trim()) errs.push("phone");
+  else if (!isValidPhone(phone)) errs.push("phone (must be 8-15 digits)");
   if (errs.length)
     return res.status(400).json({ error: `Missing/invalid: ${errs.join(", ")}` });
 
@@ -1796,7 +1803,7 @@ app.post("/salon-admin/api/settings/branches", requireTenantAuth, (req, res) => 
   const r = db.prepare(`
     INSERT INTO ${tenantId}_branches (number, name, address, map_link, phone)
     VALUES (?, ?, ?, ?, ?)
-  `).run(maxNum + 1, name.trim(), address.trim(), map_link.trim(), phone.trim());
+  `).run(maxNum + 1, name.trim(), address.trim(), map_link.trim(), (normalizePhone(phone) || phone.trim()));
   const newBranch = db.prepare(`SELECT * FROM ${tenantId}_branches WHERE id = ?`).get(r.lastInsertRowid);
   patchCache(tenantId, "branches", "upsert", newBranch).catch((e) =>
     logger.error("[cache] branches insert:", e.message)
@@ -1812,6 +1819,7 @@ app.put("/salon-admin/api/settings/branches/:id", requireTenantAuth, (req, res) 
   if (!address?.trim()) errs.push("address");
   if (!map_link?.trim() || !map_link.trim().startsWith("http")) errs.push("map_link");
   if (!phone?.trim()) errs.push("phone");
+  else if (!isValidPhone(phone)) errs.push("phone (must be 8-15 digits)");
   if (errs.length)
     return res.status(400).json({ error: `Missing/invalid: ${errs.join(", ")}` });
 
@@ -1819,7 +1827,7 @@ app.put("/salon-admin/api/settings/branches/:id", requireTenantAuth, (req, res) 
   db.prepare(`
     UPDATE ${tenantId}_branches SET name=?, address=?, map_link=?, phone=?, updated_at=datetime('now')
     WHERE id=?
-  `).run(name.trim(), address.trim(), map_link.trim(), phone.trim(), req.params.id);
+  `).run(name.trim(), address.trim(), map_link.trim(), (normalizePhone(phone) || phone.trim()), req.params.id);
   const updated = db.prepare(`SELECT * FROM ${tenantId}_branches WHERE id = ?`).get(req.params.id);
   if (updated)
     patchCache(tenantId, "branches", "upsert", updated).catch((e) =>
@@ -1863,6 +1871,7 @@ app.post("/salon-admin/api/settings/staff", requireTenantAuth, (req, res) => {
   const errs = [];
   if (!name?.trim()) errs.push("name");
   if (!phone?.trim()) errs.push("phone");
+  else if (!isValidPhone(phone)) errs.push("phone (must be 8-15 digits)");
   if (!role || !validRoles.includes(role)) errs.push(`role (${validRoles.join(", ")})`);
   if (errs.length)
     return res.status(400).json({ error: `Missing/invalid: ${errs.join(", ")}` });
@@ -1870,7 +1879,7 @@ app.post("/salon-admin/api/settings/staff", requireTenantAuth, (req, res) => {
   const r = db.prepare(`
     INSERT INTO ${tenantId}_staff (name, phone, role, branch_id, status)
     VALUES (?, ?, ?, ?, ?)
-  `).run(name.trim(), phone.trim(), role, branch_id || null, status || "active");
+  `).run(name.trim(), (normalizePhone(phone) || phone.trim()), role, branch_id || null, status || "active");
   const newStaff = db.prepare(`
     SELECT s.*, b.name AS branch_name FROM ${tenantId}_staff s
     LEFT JOIN ${tenantId}_branches b ON s.branch_id = b.id WHERE s.id = ?
@@ -1889,6 +1898,7 @@ app.put("/salon-admin/api/settings/staff/:id", requireTenantAuth, (req, res) => 
   const errs = [];
   if (!name?.trim()) errs.push("name");
   if (!phone?.trim()) errs.push("phone");
+  else if (!isValidPhone(phone)) errs.push("phone (must be 8-15 digits)");
   if (!role || !validRoles.includes(role)) errs.push("role");
   if (errs.length)
     return res.status(400).json({ error: `Missing/invalid: ${errs.join(", ")}` });
@@ -1896,7 +1906,7 @@ app.put("/salon-admin/api/settings/staff/:id", requireTenantAuth, (req, res) => 
   db.prepare(`
     UPDATE ${tenantId}_staff SET name=?, phone=?, role=?, branch_id=?, status=?, updated_at=datetime('now')
     WHERE id=?
-  `).run(name.trim(), phone.trim(), role, branch_id || null, status || "active", req.params.id);
+  `).run(name.trim(), (normalizePhone(phone) || phone.trim()), role, branch_id || null, status || "active", req.params.id);
   const updated = db.prepare(`
     SELECT s.*, b.name AS branch_name FROM ${tenantId}_staff s
     LEFT JOIN ${tenantId}_branches b ON s.branch_id = b.id WHERE s.id = ?
@@ -2189,9 +2199,11 @@ app.post("/api/customer/cancel", async (req, res) => {
   const { bookingId, phone, reason, tenantId } = req.body;
   if (!tenantId) return res.status(400).json({ error: "tenantId required" });
   if (!bookingId || !phone) return res.status(400).json({ error: "bookingId and phone required" });
+  if (!isValidPhone(phone)) return res.status(400).json({ error: "invalid phone" });
+  const phoneNorm = normalizePhone(phone);
 
   const db = getDb();
-  const booking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ? AND phone = ?`).get(bookingId, phone);
+  const booking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ? AND phone = ?`).get(bookingId, phoneNorm);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
 
   const settings = db.prepare(`
@@ -2215,7 +2227,7 @@ app.post("/api/customer/cancel", async (req, res) => {
   db.prepare(`
     INSERT INTO ${tenantId}_customer_metrics (phone, total_bookings, cancellations) VALUES (?, 1, 1)
     ON CONFLICT(phone) DO UPDATE SET cancellations = cancellations + 1, updated_at = datetime('now')
-  `).run(phone);
+  `).run(phoneNorm);
   db.prepare(`
     INSERT INTO ${tenantId}_booking_audit (booking_id, old_status, new_status, changed_by, reason)
     VALUES (?, ?, 'canceled', 'customer', ?)
@@ -3013,9 +3025,12 @@ app.post("/super-admin/api/tenants", requireSuperAdminAuth, async (req, res) => 
   const { owner_name, salon_name, email, phone, password, plan_id } = req.body;
   if (!owner_name || !salon_name || !email || !phone)
     return res.status(400).json({ error: "Missing required fields" });
+  if (!isValidPhone(phone))
+    return res.status(400).json({ error: "Invalid phone number (must be 8-15 digits, optional leading +)." });
+  const normalizedSuperTenantPhone = normalizePhone(phone);
   try {
     const generatedPassword = password || Math.random().toString(36).slice(-8);
-    const tenantId = await createTenant(owner_name, salon_name, email, phone, generatedPassword);
+    const tenantId = await createTenant(owner_name, salon_name, email, normalizedSuperTenantPhone, generatedPassword);
 
     if (plan_id) {
       const planIdNum = parseInt(plan_id, 10);
