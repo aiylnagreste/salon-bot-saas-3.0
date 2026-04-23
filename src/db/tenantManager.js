@@ -292,12 +292,21 @@ function initSuperSchema() {
             wa_webhook_verified INTEGER DEFAULT 0,
             ig_webhook_verified INTEGER DEFAULT 0,
             fb_webhook_verified INTEGER DEFAULT 0,
+            wa_credentials_valid INTEGER DEFAULT 0,
+            ig_credentials_valid INTEGER DEFAULT 0,
+            fb_credentials_valid INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         )
     `);
     // Migrate: add verified columns to existing tables if not present
     for (const col of ['wa_webhook_verified', 'ig_webhook_verified', 'fb_webhook_verified']) {
+        try {
+            superDb.exec(`ALTER TABLE tenant_webhook_configs ADD COLUMN ${col} INTEGER DEFAULT 0`);
+        } catch (_) { /* column already exists */ }
+    }
+    // Migrate: add credentials_valid columns (save-time Graph API validity) to existing tables
+    for (const col of ['wa_credentials_valid', 'ig_credentials_valid', 'fb_credentials_valid']) {
         try {
             superDb.exec(`ALTER TABLE tenant_webhook_configs ADD COLUMN ${col} INTEGER DEFAULT 0`);
         } catch (_) { /* column already exists */ }
@@ -727,6 +736,9 @@ function upsertWebhookConfig(tenantId, config) {
             wa_webhook_verified = CASE WHEN excluded.wa_access_token IS NOT NULL OR excluded.wa_verify_token IS NOT NULL THEN 0 ELSE tenant_webhook_configs.wa_webhook_verified END,
             ig_webhook_verified = CASE WHEN excluded.ig_page_access_token IS NOT NULL OR excluded.ig_verify_token IS NOT NULL THEN 0 ELSE tenant_webhook_configs.ig_webhook_verified END,
             fb_webhook_verified = CASE WHEN excluded.fb_page_access_token IS NOT NULL OR excluded.fb_verify_token IS NOT NULL THEN 0 ELSE tenant_webhook_configs.fb_webhook_verified END,
+            wa_credentials_valid = CASE WHEN excluded.wa_access_token IS NOT NULL OR excluded.wa_phone_number_id IS NOT NULL THEN 0 ELSE tenant_webhook_configs.wa_credentials_valid END,
+            ig_credentials_valid = CASE WHEN excluded.ig_page_access_token IS NOT NULL THEN 0 ELSE tenant_webhook_configs.ig_credentials_valid END,
+            fb_credentials_valid = CASE WHEN excluded.fb_page_access_token IS NOT NULL THEN 0 ELSE tenant_webhook_configs.fb_credentials_valid END,
             updated_at          = excluded.updated_at
     `).run(tenantId, wa_phone_number_id, wa_access_token, wa_verify_token,
             ig_page_access_token, ig_verify_token,
@@ -736,13 +748,20 @@ function upsertWebhookConfig(tenantId, config) {
 function clearWebhookChannel(tenantId, channel) {
     const db = getSuperDb();
     const fieldMap = {
-        whatsapp: `wa_phone_number_id = NULL, wa_access_token = NULL, wa_verify_token = NULL, wa_webhook_verified = 0`,
-        instagram: `ig_page_access_token = NULL, ig_verify_token = NULL, ig_webhook_verified = 0`,
-        facebook: `fb_page_access_token = NULL, fb_verify_token = NULL, fb_webhook_verified = 0`,
+        whatsapp: `wa_phone_number_id = NULL, wa_access_token = NULL, wa_verify_token = NULL, wa_webhook_verified = 0, wa_credentials_valid = 0`,
+        instagram: `ig_page_access_token = NULL, ig_verify_token = NULL, ig_webhook_verified = 0, ig_credentials_valid = 0`,
+        facebook: `fb_page_access_token = NULL, fb_verify_token = NULL, fb_webhook_verified = 0, fb_credentials_valid = 0`,
     };
     const fields = fieldMap[channel];
     if (!fields) return;
     db.prepare(`UPDATE tenant_webhook_configs SET ${fields}, updated_at = datetime('now') WHERE tenant_id = ?`).run(tenantId);
+}
+
+function setCredentialsValid(tenantId, platform, valid) {
+    const col = { whatsapp: 'wa_credentials_valid', instagram: 'ig_credentials_valid', facebook: 'fb_credentials_valid' }[platform];
+    if (!col) return;
+    const db = getSuperDb();
+    db.prepare(`UPDATE tenant_webhook_configs SET ${col} = ?, updated_at = datetime('now') WHERE tenant_id = ?`).run(valid ? 1 : 0, tenantId);
 }
 
 // ── Plans ─────────────────────────────────────────────────────────────────────
@@ -1176,6 +1195,7 @@ module.exports = {
     getWebhookConfig,
     upsertWebhookConfig,
     clearWebhookChannel,
+    setCredentialsValid,
     getAllPlans,
     getActivePlans,
     getPlanById,

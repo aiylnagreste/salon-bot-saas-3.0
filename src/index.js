@@ -31,6 +31,7 @@ const {
   getWebhookConfig,
   upsertWebhookConfig,
   clearWebhookChannel,
+  setCredentialsValid,
   updateTenantPassword,
   changeSuperAdminPassword,
   getAllPlans,
@@ -74,6 +75,7 @@ const { routeMessage } = require("./core/router");
 
 const { sendWelcomeEmail, sendPasswordResetEmail, sendPlanUpgradeEmail, sendPlanDowngradeEmail } = require('./services/emailService');
 const { createCheckoutSession,createUpgradeCheckoutSession, constructWebhookEvent, retrieveSubscription } = require('./services/stripeService');
+const { testWhatsAppCredentials, testInstagramCredentials, testFacebookCredentials } = require('./utils/metaCredentialTester');
 
 // ── JWT secret — REQUIRED in production ──────────────────────────────────────
 const JWT_SECRET = process.env.TENANT_JWT_SECRET;
@@ -2672,6 +2674,12 @@ app.get("/salon-admin/api/webhook-config", requireTenantAuth, (req, res) => {
       has_whatsapp: false,
       has_instagram: false,
       has_facebook: false,
+      wa_verified: false,
+      ig_verified: false,
+      fb_verified: false,
+      wa_credentials_valid: false,
+      ig_credentials_valid: false,
+      fb_credentials_valid: false,
       wa_phone_number_id: "",
       webhook_urls,
     });
@@ -2684,12 +2692,15 @@ app.get("/salon-admin/api/webhook-config", requireTenantAuth, (req, res) => {
     wa_verified: !!(config.wa_webhook_verified),
     ig_verified: !!(config.ig_webhook_verified),
     fb_verified: !!(config.fb_webhook_verified),
+    wa_credentials_valid: !!(config.wa_credentials_valid),
+    ig_credentials_valid: !!(config.ig_credentials_valid),
+    fb_credentials_valid: !!(config.fb_credentials_valid),
     wa_phone_number_id: config.wa_phone_number_id || "",
     webhook_urls,
   });
 });
 
-app.put("/salon-admin/api/webhook-config", requireTenantAuth, (req, res) => {
+app.put("/salon-admin/api/webhook-config", requireTenantAuth, async (req, res) => {
   const {
     wa_phone_number_id, wa_access_token, wa_verify_token,
     ig_page_access_token, ig_verify_token,
@@ -2721,7 +2732,39 @@ app.put("/salon-admin/api/webhook-config", requireTenantAuth, (req, res) => {
     ig_page_access_token, ig_verify_token,
     fb_page_access_token, fb_verify_token,
   });
-  res.json({ ok: true });
+
+  // Validate credentials against Meta Graph API (fail-open: never abort the save)
+  const validation = {};
+  try {
+    // Re-read merged row so we test against what's actually stored.
+    const stored = getWebhookConfig(req.tenantId) || {};
+    if (wantsWhatsapp) {
+      const r = await testWhatsAppCredentials({
+        phone_number_id: stored.wa_phone_number_id,
+        access_token: stored.wa_access_token,
+      });
+      setCredentialsValid(req.tenantId, 'whatsapp', r.ok);
+      validation.whatsapp = r;
+      logger.info(`[webhook-config] tenant=${req.tenantId} WA credentials_valid=${r.ok}`);
+    }
+    if (wantsInstagram) {
+      const r = await testInstagramCredentials({ page_access_token: stored.ig_page_access_token });
+      setCredentialsValid(req.tenantId, 'instagram', r.ok);
+      validation.instagram = r;
+      logger.info(`[webhook-config] tenant=${req.tenantId} IG credentials_valid=${r.ok}`);
+    }
+    if (wantsFacebook) {
+      const r = await testFacebookCredentials({ page_access_token: stored.fb_page_access_token });
+      setCredentialsValid(req.tenantId, 'facebook', r.ok);
+      validation.facebook = r;
+      logger.info(`[webhook-config] tenant=${req.tenantId} FB credentials_valid=${r.ok}`);
+    }
+  } catch (err) {
+    logger.error(`[webhook-config] credential test failed for ${req.tenantId}: ${err.message}`);
+    // Never abort the save — credentials stay stored, validation remains absent/false.
+  }
+
+  res.json({ ok: true, validation });
 });
 
 app.delete("/salon-admin/api/webhook-config/:channel", requireTenantAuth, (req, res) => {
@@ -3305,10 +3348,10 @@ app.get("/super-admin/api/integrations/salons", requireSuperAdminAuth, (req, res
       const hasInstagramAccess = subscription?.instagram_access === 1;
       const hasFacebookAccess = subscription?.facebook_access === 1;
 
-      // ✅ FIXED: Connection status requires BOTH token AND webhook verification
-      const isWhatsAppConnected = hasWhatsAppAccess && !!(config?.wa_access_token && config?.wa_phone_number_id && config?.wa_webhook_verified);
-      const isInstagramConnected = hasInstagramAccess && !!(config?.ig_page_access_token && config?.ig_webhook_verified);
-      const isFacebookConnected = hasFacebookAccess && !!(config?.fb_page_access_token && config?.fb_webhook_verified);
+      // ✅ FIXED: Connection status requires BOTH token AND (webhook verified OR credentials validated on save)
+      const isWhatsAppConnected = hasWhatsAppAccess && !!(config?.wa_access_token && config?.wa_phone_number_id && (config?.wa_webhook_verified || config?.wa_credentials_valid));
+      const isInstagramConnected = hasInstagramAccess && !!(config?.ig_page_access_token && (config?.ig_webhook_verified || config?.ig_credentials_valid));
+      const isFacebookConnected = hasFacebookAccess && !!(config?.fb_page_access_token && (config?.fb_webhook_verified || config?.fb_credentials_valid));
 
       // Only show integrations that the plan has access to
       return {
@@ -3378,7 +3421,7 @@ app.get("/super-admin/api/integrations/:salonId", requireSuperAdminAuth, (req, r
   }
 });
 // Replace the existing PUT /super-admin/api/integrations/:salonId with:
-app.put("/super-admin/api/integrations/:salonId", requireSuperAdminAuth, (req, res) => {
+app.put("/super-admin/api/integrations/:salonId", requireSuperAdminAuth, async (req, res) => {
   try {
     const salonId = parseInt(req.params.salonId);
     const tenants = getAllTenants();
@@ -3398,8 +3441,42 @@ app.put("/super-admin/api/integrations/:salonId", requireSuperAdminAuth, (req, r
       fb_verify_token: req.body.fb_verify_token || undefined,
     });
 
-    logger.info(`[super-admin] Updated webhook config for tenant ${tenant.tenant_id}`);
-    res.json({ success: true });
+    logger.info(`[super-admin integrations] Updated webhook config for tenant ${tenant.tenant_id}`);
+
+    // Validate credentials against Meta Graph API (fail-open: never abort the save)
+    const wantsWhatsapp  = !!(req.body.wa_access_token || req.body.wa_phone_number_id || req.body.wa_verify_token);
+    const wantsInstagram = !!(req.body.ig_page_access_token || req.body.ig_verify_token);
+    const wantsFacebook  = !!(req.body.fb_page_access_token || req.body.fb_verify_token);
+    const validation = {};
+    try {
+      const stored = getWebhookConfig(tenant.tenant_id) || {};
+      if (wantsWhatsapp) {
+        const r = await testWhatsAppCredentials({
+          phone_number_id: stored.wa_phone_number_id,
+          access_token: stored.wa_access_token,
+        });
+        setCredentialsValid(tenant.tenant_id, 'whatsapp', r.ok);
+        validation.whatsapp = r;
+        logger.info(`[super-admin integrations] tenant=${tenant.tenant_id} WA credentials_valid=${r.ok}`);
+      }
+      if (wantsInstagram) {
+        const r = await testInstagramCredentials({ page_access_token: stored.ig_page_access_token });
+        setCredentialsValid(tenant.tenant_id, 'instagram', r.ok);
+        validation.instagram = r;
+        logger.info(`[super-admin integrations] tenant=${tenant.tenant_id} IG credentials_valid=${r.ok}`);
+      }
+      if (wantsFacebook) {
+        const r = await testFacebookCredentials({ page_access_token: stored.fb_page_access_token });
+        setCredentialsValid(tenant.tenant_id, 'facebook', r.ok);
+        validation.facebook = r;
+        logger.info(`[super-admin integrations] tenant=${tenant.tenant_id} FB credentials_valid=${r.ok}`);
+      }
+    } catch (err) {
+      logger.error(`[super-admin integrations] credential test failed for ${tenant.tenant_id}: ${err.message}`);
+      // Never abort the save — credentials stay stored, validation remains absent/false.
+    }
+
+    res.json({ success: true, validation });
 
   } catch (err) {
     logger.error("[super-admin integrations] Error updating integration:", err.message);
