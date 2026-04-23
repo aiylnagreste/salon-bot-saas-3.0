@@ -779,7 +779,7 @@ BOOKING (when caller wants to book an appointment):
 1. Immediately call get_services AND get_branches so you know what is available.
 2. Collect these required fields — use values the caller already mentioned, ask only for missing ones:
    • name    — caller's name (e.g. "Alyan")
-   • phone   — 8 to 15 digits, optional leading '+', no spaces (e.g. "03001234567")
+   • phone   — 8 to 15 digits, optional leading '+', no spaces (e.g. "03001234567"). The moment the caller says their number, count the digits. If it is shorter than 8 digits or longer than 15 digits, immediately read the number back to the caller digit by digit and say: "The number you gave me, [read digits aloud], is not a valid phone number. Please give me your correct phone number." (Urdu: "Aap ne jo number diya, [read digits aloud], woh valid nahi hai. Barae meherbani sahi phone number bataiye.") Do NOT call create_booking with an invalid phone — ask again until the caller provides 8–15 digits.
    • service — must exactly match a name returned by get_services
    • branch  — must exactly match a name returned by get_branches
    • date    — accept any natural date the caller gives ("kal", "Friday", "30 April") and YOU convert it internally. NEVER ask the caller to type a date in any specific format. Reject past dates — ask them to choose today or a future date.
