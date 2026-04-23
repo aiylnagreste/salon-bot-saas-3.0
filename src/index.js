@@ -3299,12 +3299,17 @@ app.get("/super-admin/api/integrations/salons", requireSuperAdminAuth, (req, res
       // Get the tenant's active subscription with plan details
       const subscription = getTenantSubscription(tenant.tenant_id);
       const config = getWebhookConfig(tenant.tenant_id);
-      
+
       // Determine if the plan has access to each feature
       const hasWhatsAppAccess = subscription?.whatsapp_access === 1;
       const hasInstagramAccess = subscription?.instagram_access === 1;
       const hasFacebookAccess = subscription?.facebook_access === 1;
-      
+
+      // ✅ FIXED: Connection status requires BOTH token AND webhook verification
+      const isWhatsAppConnected = hasWhatsAppAccess && !!(config?.wa_access_token && config?.wa_phone_number_id && config?.wa_webhook_verified);
+      const isInstagramConnected = hasInstagramAccess && !!(config?.ig_page_access_token && config?.ig_webhook_verified);
+      const isFacebookConnected = hasFacebookAccess && !!(config?.fb_page_access_token && config?.fb_webhook_verified);
+
       // Only show integrations that the plan has access to
       return {
         salon_id: tenant.id,
@@ -3320,26 +3325,21 @@ app.get("/super-admin/api/integrations/salons", requireSuperAdminAuth, (req, res
           widget: subscription?.widget_access === 1,
           ai_calls: subscription?.ai_calls_access === 1,
         },
-        // Actual connection status (whether configured)
-        has_whatsapp: hasWhatsAppAccess && !!(config?.wa_access_token && config?.wa_phone_number_id),
-        has_instagram: hasInstagramAccess && !!config?.ig_page_access_token,
-        has_facebook: hasFacebookAccess && !!config?.fb_page_access_token,
+        // ✅ FIXED: Actual connection status (requires verification)
+        has_whatsapp: isWhatsAppConnected,
+        has_instagram: isInstagramConnected,
+        has_facebook: isFacebookConnected,
         has_widget: subscription?.widget_access === 1,
         has_ai_calls: subscription?.ai_calls_access === 1 && !!config?.ai_calls_enabled,
-        // Show if plan allows but not configured
+        // ✅ FIXED: Show what needs configuration (opposite of connection status)
         needs_configuration: {
-          whatsapp: hasWhatsAppAccess && !(config?.wa_access_token && config?.wa_phone_number_id),
-          instagram: hasInstagramAccess && !config?.ig_page_access_token,
-          facebook: hasFacebookAccess && !config?.fb_page_access_token,
+          whatsapp: hasWhatsAppAccess && !isWhatsAppConnected,
+          instagram: hasInstagramAccess && !isInstagramConnected,
+          facebook: hasFacebookAccess && !isFacebookConnected,
         }
       };
     });
-    
-    // Optional: Filter to only show salons that have at least one integration feature in their plan
-    // const salonsWithIntegrations = result.filter(salon => 
-    //   salon.plan_features.whatsapp || salon.plan_features.instagram || salon.plan_features.facebook
-    // );
-    
+
     res.json(result);
   } catch (err) {
     logger.error("[super-admin integrations] Error fetching salons:", err.message);
