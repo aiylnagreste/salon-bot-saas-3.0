@@ -3366,6 +3366,11 @@ app.get("/super-admin/api/integrations/:salonId", requireSuperAdminAuth, (req, r
       whatsapp_access_token: config?.wa_access_token ? "configured" : null,  // never expose actual token
       instagram_access_token: config?.ig_page_access_token ? "configured" : null,
       facebook_access_token: config?.fb_page_access_token ? "configured" : null,
+
+      whatsapp_verify_token: config?.wa_verify_token ? "configured" : null,
+      instagram_verify_token: config?.ig_verify_token ? "configured" : null,
+      facebook_verify_token: config?.fb_verify_token ? "configured" : null,
+      
     });
   } catch (err) {
     logger.error("[super-admin integrations] Error fetching salon details:", err.message);
