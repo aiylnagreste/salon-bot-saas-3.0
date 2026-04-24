@@ -1787,7 +1787,12 @@ app.get("/salon-admin/api/invoices/:id", requireTenantAuth, (req, res) => {
   const tenantId = req.tenantId;
   const db = getDb();
   try {
-    const row = db.prepare(`SELECT * FROM ${tenantId}_invoices WHERE id = ?`).get(Number(req.params.id));
+    const row = db.prepare(`
+      SELECT i.*, br.address AS branch_address, br.phone AS branch_phone
+      FROM ${tenantId}_invoices i
+      LEFT JOIN ${tenantId}_branches br ON br.name = i.branch
+      WHERE i.id = ?
+    `).get(Number(req.params.id));
     if (!row) return res.status(404).json({ ok: false, error: "Invoice not found" });
     res.json(row);
   } catch (err) {
