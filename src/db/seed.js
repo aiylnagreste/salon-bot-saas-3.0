@@ -36,18 +36,18 @@ module.exports = function (tenantId) {
   
   // Seed deals (base table - shared)
   const insertDeal = db.prepare(
-    `INSERT INTO ${tables.deals} (title, description, active) VALUES (?, ?, ?)`
+    `INSERT INTO ${tables.deals} (title, description, off , active) VALUES (?, ?, ?,?)`
   );
 
   const deals = [
-    ['Weekend Special', 'Get 20% off all hair services every Saturday and Sunday!', 1],
-    ['Student Discount', 'Show your student ID and enjoy 15% off any service.', 1],
-    ['Loyalty Package', 'Book 5 sessions and get the 6th one FREE!', 1],
-    ['New Client Offer', 'First visit? Enjoy a complimentary hair treatment with any service.', 0],
+    ['Weekend Special', 'Get 20% off all hair services every Saturday and Sunday!', 20, 1],
+    ['Student Discount', 'Show your student ID and enjoy 15% off any service.', 15, 1],
+    ['Loyalty Package', 'Book 5 sessions and get the 6th one FREE!', 100, 1],
+    ['New Client Offer', 'First visit? Enjoy a complimentary hair treatment with any service.', 10, 0],
   ];
 
-  for (const [title, description, active] of deals) {
-    insertDeal.run(title, description, active);
+  for (const [title, description, off, active] of deals) {
+    insertDeal.run(title, description, off, active);
   }
   console.log(`✅ Seeded ${deals.length} deals`);
 

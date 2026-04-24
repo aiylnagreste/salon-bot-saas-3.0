@@ -1782,6 +1782,53 @@ app.get("/salon-admin/api/invoices", requireTenantAuth, (req, res) => {
   }
 });
 
+// GET /salon-admin/api/invoices/:id — single invoice by id (used by reports click-to-view)
+app.get("/salon-admin/api/invoices/:id", requireTenantAuth, (req, res) => {
+  const tenantId = req.tenantId;
+  const db = getDb();
+  try {
+    const row = db.prepare(`SELECT * FROM ${tenantId}_invoices WHERE id = ?`).get(Number(req.params.id));
+    if (!row) return res.status(404).json({ ok: false, error: "Invoice not found" });
+    res.json(row);
+  } catch (err) {
+    logger.error("[invoices] GET :id failed:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// GET /salon-admin/api/staff/income?month=YYYY-MM  (defaults to current month, UTC)
+// Returns per-staff tips total for the given month from the invoices table.
+app.get("/salon-admin/api/staff/income", requireTenantAuth, (req, res) => {
+  const tenantId = req.tenantId;
+  const db = getDb();
+  const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month))
+    ? req.query.month
+    : new Date().toISOString().slice(0, 7);
+  const monthStart = `${month}-01`;
+  const [y, m] = month.split("-").map(Number);
+  const nextM = m === 12
+    ? `${y + 1}-01-01`
+    : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+  try {
+    const rows = db.prepare(`
+      SELECT st.id AS staff_id, st.name AS staff_name,
+             COALESCE(SUM(i.tips), 0) AS tips_total,
+             COUNT(i.id) AS invoice_count
+      FROM ${tenantId}_staff st
+      LEFT JOIN ${tenantId}_invoices i
+        ON i.staff_id = st.id
+       AND i.created_at >= ?
+       AND i.created_at < ?
+      GROUP BY st.id, st.name
+      ORDER BY tips_total DESC, st.name ASC
+    `).all(monthStart, nextM);
+    res.json({ month, rows });
+  } catch (err) {
+    logger.error("[staff/income] failed:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.patch("/salon-admin/api/bookings/:id/no-show", requireTenantAuth, async (req, res) => {
   const tenantId = req.tenantId;
   const bookingId = req.params.id;
@@ -1844,7 +1891,7 @@ app.delete("/salon-admin/api/bookings/:id", requireTenantAuth, (req, res) => {
 app.get("/salon-admin/api/analytics/clients", requireTenantAuth, (req, res) => {
   const tenantId = req.tenantId;
   const db = getDb();
-  const { branch, from, to, status = "completed", period, tz = "UTC" } = req.query;
+  const { branch, from, to, status = "completed", period, tz = "UTC", source = "bookings" } = req.query;
 
   const statuses = status.split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -1877,74 +1924,138 @@ app.get("/salon-admin/api/analytics/clients", requireTenantAuth, (req, res) => {
     }
   }
 
-  // Build WHERE clause
-  const statusPlaceholders = statuses.map(() => "?").join(",");
-  let sql = `SELECT b.customer_name, b.phone, b.service, b.branch, b.date, b.time, b.status, 
-                    b.staff_name, s.price AS service_price
-             FROM ${tenantId}_bookings b
-             LEFT JOIN ${tenantId}_services s ON b.service = s.name
-             WHERE b.status IN (${statusPlaceholders})`;
-  const args = [...statuses];
-
-  if (branch && branch !== "all") { sql += " AND b.branch = ?"; args.push(branch); }
-  if (rangeFrom) { sql += " AND b.date >= ?"; args.push(rangeFrom); }
-  if (rangeTo) { sql += " AND b.date <= ?"; args.push(rangeTo); }
-
-  sql += " ORDER BY b.date DESC, b.time DESC";
-
-  const bookings = db.prepare(sql).all(...args);
-
   // Group by client (phone as unique key)
   const clientMap = new Map();
 
-  for (const b of bookings) {
-    const key = b.phone || `__name_${b.customer_name}`;
+  if (source === "invoices") {
+    // Invoice-sourced client rollup: only clients who have been invoiced appear.
+    // totalSpent / revenue excludes tips (tips belong to staff, not salon revenue).
+    let sql = `SELECT i.id AS invoice_id, i.booking_id, i.customer_name, i.phone,
+                      i.service, i.branch, i.staff_name,
+                      i.total, i.tips, i.service_price,
+                      i.extra_services_price, i.deals_off_pct, i.discount_amount,
+                      i.payment_type, i.created_at
+               FROM ${tenantId}_invoices i
+               WHERE 1=1`;
+    const args = [];
+    if (branch && branch !== "all") { sql += " AND i.branch = ?"; args.push(branch); }
+    if (rangeFrom) { sql += " AND DATE(i.created_at) >= ?"; args.push(rangeFrom); }
+    if (rangeTo)   { sql += " AND DATE(i.created_at) <= ?"; args.push(rangeTo); }
+    sql += " ORDER BY i.created_at DESC";
+    const invoices = db.prepare(sql).all(...args);
 
-    if (!clientMap.has(key)) {
-      clientMap.set(key, {
-        customer_name: b.customer_name,
-        phone: b.phone || null,
-        services: [],      // Array of { name, count, revenue }
-        bookings: [],      // Array of individual booking records
-        totalBookings: 0,
-        totalSpent: 0,
-        lastVisit: b.date,
-        firstVisit: b.date,
-        branches: new Set(),
+    for (const inv of invoices) {
+      const key = inv.phone || `__name_${inv.customer_name}`;
+      const dateOnly = (inv.created_at || "").slice(0, 10);
+      const tips = Number(inv.tips) || 0;
+      const net = (Number(inv.total) || 0) - tips;
+
+      if (!clientMap.has(key)) {
+        clientMap.set(key, {
+          customer_name: inv.customer_name,
+          phone: inv.phone || null,
+          services: [],
+          bookings: [],
+          totalBookings: 0,
+          totalSpent: 0,
+          lastVisit: dateOnly,
+          firstVisit: dateOnly,
+          branches: new Set(),
+        });
+      }
+
+      const client = clientMap.get(key);
+
+      const existingSvc = client.services.find(s => s.name === inv.service);
+      if (existingSvc) {
+        existingSvc.count++;
+        existingSvc.revenue += net;
+      } else {
+        client.services.push({ name: inv.service, count: 1, revenue: net });
+      }
+
+      client.bookings.push({
+        date: dateOnly,
+        time: "",
+        service: inv.service,
+        branch: inv.branch,
+        staff_name: inv.staff_name,
+        price: net,
+        invoice_id: inv.invoice_id,
+        booking_id: inv.booking_id,
       });
+
+      client.totalBookings++;
+      client.totalSpent += net;
+      if (dateOnly > client.lastVisit) client.lastVisit = dateOnly;
+      if (dateOnly < client.firstVisit) client.firstVisit = dateOnly;
+      if (inv.branch) client.branches.add(inv.branch);
     }
+  } else {
+    // Default: bookings-sourced (existing behavior)
+    const statusPlaceholders = statuses.map(() => "?").join(",");
+    let sql = `SELECT b.customer_name, b.phone, b.service, b.branch, b.date, b.time, b.status,
+                      b.staff_name, s.price AS service_price
+               FROM ${tenantId}_bookings b
+               LEFT JOIN ${tenantId}_services s ON b.service = s.name
+               WHERE b.status IN (${statusPlaceholders})`;
+    const args = [...statuses];
 
-    const client = clientMap.get(key);
-    const price = parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
+    if (branch && branch !== "all") { sql += " AND b.branch = ?"; args.push(branch); }
+    if (rangeFrom) { sql += " AND b.date >= ?"; args.push(rangeFrom); }
+    if (rangeTo) { sql += " AND b.date <= ?"; args.push(rangeTo); }
 
-    // Add to services summary
-    const existingSvc = client.services.find(s => s.name === b.service);
-    if (existingSvc) {
-      existingSvc.count++;
-      existingSvc.revenue += price;
-    } else {
-      client.services.push({
-        name: b.service,
-        count: 1,
-        revenue: price,
+    sql += " ORDER BY b.date DESC, b.time DESC";
+
+    const bookings = db.prepare(sql).all(...args);
+
+    for (const b of bookings) {
+      const key = b.phone || `__name_${b.customer_name}`;
+
+      if (!clientMap.has(key)) {
+        clientMap.set(key, {
+          customer_name: b.customer_name,
+          phone: b.phone || null,
+          services: [],
+          bookings: [],
+          totalBookings: 0,
+          totalSpent: 0,
+          lastVisit: b.date,
+          firstVisit: b.date,
+          branches: new Set(),
+        });
+      }
+
+      const client = clientMap.get(key);
+      const price = parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
+
+      const existingSvc = client.services.find(s => s.name === b.service);
+      if (existingSvc) {
+        existingSvc.count++;
+        existingSvc.revenue += price;
+      } else {
+        client.services.push({
+          name: b.service,
+          count: 1,
+          revenue: price,
+        });
+      }
+
+      client.bookings.push({
+        date: b.date,
+        time: b.time,
+        service: b.service,
+        branch: b.branch,
+        staff_name: b.staff_name,
+        price: price,
       });
+
+      client.totalBookings++;
+      client.totalSpent += price;
+      if (b.date > client.lastVisit) client.lastVisit = b.date;
+      if (b.date < client.firstVisit) client.firstVisit = b.date;
+      if (b.branch) client.branches.add(b.branch);
     }
-
-    // Add individual booking record
-    client.bookings.push({
-      date: b.date,
-      time: b.time,
-      service: b.service,
-      branch: b.branch,
-      staff_name: b.staff_name,
-      price: price,
-    });
-
-    client.totalBookings++;
-    client.totalSpent += price;
-    if (b.date > client.lastVisit) client.lastVisit = b.date;
-    if (b.date < client.firstVisit) client.firstVisit = b.date;
-    if (b.branch) client.branches.add(b.branch);
   }
 
   // Convert to array, sort by totalSpent desc, then by totalBookings
@@ -1969,7 +2080,7 @@ app.get("/salon-admin/api/analytics/clients", requireTenantAuth, (req, res) => {
     newClients,
     returningClients,
     queryRange: { start: rangeFrom, end: rangeTo, tz },
-    filtersApplied: { statuses, branch: branch || null, period: period || null },
+    filtersApplied: { statuses, branch: branch || null, period: period || null, source },
     dataFreshAsOf: serverTime,
   });
 });
@@ -2545,7 +2656,7 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
 
   // Build WHERE clause
   const statusPlaceholders = statuses.map(() => "?").join(",");
-  let sql = `SELECT b.*, s.price AS service_price, i.total AS invoice_total
+  let sql = `SELECT b.*, s.price AS service_price, i.total AS invoice_total, i.tips AS invoice_tips
              FROM ${tenantId}_bookings b
              LEFT JOIN ${tenantId}_services s ON b.service = s.name
              LEFT JOIN ${tenantId}_invoices i ON i.booking_id = b.id
@@ -2558,9 +2669,13 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
 
   const bookings = db.prepare(sql).all(...args);
 
-  // Prefer invoice_total when present; fallback to service_price for pre-invoice completed bookings
+  // Prefer invoice_total - tips when present (tips belong to staff, not the salon);
+  // fallback to service_price for pre-invoice completed bookings.
   const priceOf = (b) => {
-    if (b.invoice_total != null) return Number(b.invoice_total) || 0;
+    if (b.invoice_total != null) {
+      const tips = Number(b.invoice_tips) || 0;
+      return (Number(b.invoice_total) || 0) - tips;
+    }
     return parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
   };
 
