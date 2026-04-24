@@ -57,7 +57,8 @@ function createTenantTables(tenantId) {
     booking_audit: `${tenantId}_booking_audit`,
     booking_reschedules: `${tenantId}_booking_reschedules`,
     notification_logs: `${tenantId}_notification_logs`,
-    staff_bookings: `${tenantId}_staff_bookings`
+    staff_bookings: `${tenantId}_staff_bookings`,
+    invoices: `${tenantId}_invoices`
   };
 
   // Create ALL tenant tables
@@ -237,6 +238,27 @@ function createTenantTables(tenantId) {
       created_at TEXT   DEFAULT (datetime('now')),
       updated_at TEXT   DEFAULT (datetime('now')),
       UNIQUE(staffId, bookingId)
+    );
+
+    -- Invoices table
+    CREATE TABLE IF NOT EXISTS ${tables.invoices} (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      booking_id           INTEGER NOT NULL UNIQUE REFERENCES ${tables.bookings}(id) ON DELETE CASCADE,
+      customer_name        TEXT    NOT NULL,
+      phone                TEXT,
+      service              TEXT    NOT NULL,
+      branch               TEXT,
+      staff_id             INTEGER REFERENCES ${tables.staff}(id) ON DELETE SET NULL,
+      staff_name           TEXT,
+      service_price        REAL    NOT NULL DEFAULT 0,
+      extra_services_price REAL    NOT NULL DEFAULT 0,
+      tips                 REAL    NOT NULL DEFAULT 0,
+      deal_ids_json        TEXT    NOT NULL DEFAULT '[]',
+      deals_off_pct        INTEGER NOT NULL DEFAULT 0,
+      discount_amount      REAL    NOT NULL DEFAULT 0,
+      total                REAL    NOT NULL DEFAULT 0,
+      payment_type         TEXT    NOT NULL CHECK (payment_type IN ('cash','card','bank_to_bank')),
+      created_at           TEXT    DEFAULT (datetime('now'))
     );
   `);
 
@@ -469,6 +491,30 @@ function ensureTenantTables(tenantId) {
     try {
       dbInstance.exec(`ALTER TABLE ${tenantId}_deals ADD COLUMN off INTEGER NOT NULL DEFAULT 0`);
     } catch (_) { /* column already exists */ }
+    // Migration: create invoices table for existing tenants (new table — no ALTER needed)
+    try {
+      dbInstance.exec(`
+        CREATE TABLE IF NOT EXISTS ${tenantId}_invoices (
+          id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+          booking_id           INTEGER NOT NULL UNIQUE REFERENCES ${tenantId}_bookings(id) ON DELETE CASCADE,
+          customer_name        TEXT    NOT NULL,
+          phone                TEXT,
+          service              TEXT    NOT NULL,
+          branch               TEXT,
+          staff_id             INTEGER REFERENCES ${tenantId}_staff(id) ON DELETE SET NULL,
+          staff_name           TEXT,
+          service_price        REAL    NOT NULL DEFAULT 0,
+          extra_services_price REAL    NOT NULL DEFAULT 0,
+          tips                 REAL    NOT NULL DEFAULT 0,
+          deal_ids_json        TEXT    NOT NULL DEFAULT '[]',
+          deals_off_pct        INTEGER NOT NULL DEFAULT 0,
+          discount_amount      REAL    NOT NULL DEFAULT 0,
+          total                REAL    NOT NULL DEFAULT 0,
+          payment_type         TEXT    NOT NULL CHECK (payment_type IN ('cash','card','bank_to_bank')),
+          created_at           TEXT    DEFAULT (datetime('now'))
+        );
+      `);
+    } catch (e) { console.error(`[invoices migration] ${tenantId}:`, e.message); }
   } catch (error) {
     console.error(`Error ensuring tenant tables for ${tenantId}:`, error);
     createTenantTables(tenantId);
@@ -488,6 +534,7 @@ function dropTenantTables(tenantId) {
   console.log(`⚠️ Dropping ALL tables for tenant ${tenantId}...`);
 
   const tables = [
+    `${tenantId}_invoices`,
     `${tenantId}_deals`,
     `${tenantId}_services`,
     `${tenantId}_staff_roles`,

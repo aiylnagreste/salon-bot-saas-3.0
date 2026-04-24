@@ -561,7 +561,8 @@ function findNextAvailableSlots(date, branch, durationMinutes, db, tenantId) {
 
 // Valid status transitions — anything not in this map is rejected
 const STATUS_TRANSITIONS = {
-  confirmed:   ["canceled", "completed", "no_show"],
+  confirmed:   ["canceled", "completed", "no_show", "arrived"],
+  arrived:     ["canceled", "no_show", "completed"],  // arrived clients can still be canceled/no-show (defensive); invoice flow sets completed
   no_show:     ["confirmed"],  // allow un-marking a false no-show
   canceled:    [],             // terminal — no restoring
   completed:   [],             // terminal
@@ -1622,7 +1623,7 @@ app.patch("/salon-admin/api/bookings/:id/status", requireTenantAuth, (req, res) 
   const db = getDb();
   const newStatus = (req.body.status || "").toLowerCase();
 
-  const VALID_STATUSES = ["confirmed", "canceled", "completed", "no_show"];
+  const VALID_STATUSES = ["confirmed", "canceled", "completed", "no_show", "arrived"];
   if (!VALID_STATUSES.includes(newStatus))
     return res.status(400).json({ ok: false, error: `Status must be one of: ${VALID_STATUSES.join(", ")}` });
 
@@ -1635,7 +1636,7 @@ app.patch("/salon-admin/api/bookings/:id/status", requireTenantAuth, (req, res) 
   db.prepare(`UPDATE ${tenantId}_bookings SET status=?, updated_at=datetime('now') WHERE id=?`)
     .run(newStatus, bookingId);
 
-  if (["canceled", "no_show", "completed"].includes(newStatus))
+  if (["canceled", "no_show", "completed", "arrived"].includes(newStatus))
     db.prepare(`UPDATE ${tenantId}_staff_bookings SET status=?, updated_at=datetime('now') WHERE bookingId=?`)
       .run(newStatus, bookingId);
 
@@ -1658,12 +1659,127 @@ app.patch("/salon-admin/api/bookings/:id/status", requireTenantAuth, (req, res) 
     `).run(bookingId, current.status, req.body.reason || "Canceled via admin panel");
   }
 
+  if (newStatus === "arrived") {
+    db.prepare(`
+      INSERT INTO ${tenantId}_booking_audit (booking_id, old_status, new_status, changed_by, reason)
+      VALUES (?, ?, 'arrived', 'admin', 'Marked as arrived via admin panel')
+    `).run(bookingId, current.status);
+  }
+
   const updated = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(bookingId);
   if (updated)
     patchCache(tenantId, "bookings", "upsert", updated).catch((e) =>
       logger.error("[cache] bookings status patch:", e.message)
     );
   res.json({ ok: true });
+});
+
+// POST /salon-admin/api/invoices
+//   Body: { booking_id, extra_services_price, tips, deal_ids: number[], payment_type }
+//   Creates an invoice, transitions booking status arrived→completed, returns the inserted row.
+//   Idempotency: UNIQUE(booking_id) constraint — returns 409 on duplicate.
+app.post("/salon-admin/api/invoices", requireTenantAuth, (req, res) => {
+  const tenantId = req.tenantId;
+  const db = getDb();
+  const {
+    booking_id,
+    extra_services_price = 0,
+    tips = 0,
+    deal_ids = [],
+    payment_type,
+  } = req.body || {};
+
+  const errs = [];
+  if (!Number.isInteger(booking_id) || booking_id <= 0) errs.push("booking_id required (integer)");
+  const extras = Number(extra_services_price);
+  const tipsNum = Number(tips);
+  if (!Number.isFinite(extras) || extras < 0) errs.push("extra_services_price must be >= 0");
+  if (!Number.isFinite(tipsNum) || tipsNum < 0) errs.push("tips must be >= 0");
+  if (!Array.isArray(deal_ids) || deal_ids.some(d => !Number.isInteger(d))) errs.push("deal_ids must be integer array");
+  const VALID_PAY = ["cash", "card", "bank_to_bank"];
+  if (!VALID_PAY.includes(payment_type)) errs.push(`payment_type must be one of: ${VALID_PAY.join(", ")}`);
+  if (errs.length) return res.status(400).json({ ok: false, error: errs.join("; ") });
+
+  const booking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(booking_id);
+  if (!booking) return res.status(404).json({ ok: false, error: "Booking not found" });
+  if (booking.status !== "arrived") {
+    return res.status(400).json({ ok: false, error: `Invoice can only be generated for arrived bookings (current: ${booking.status})` });
+  }
+
+  const existing = db.prepare(`SELECT id FROM ${tenantId}_invoices WHERE booking_id = ?`).get(booking_id);
+  if (existing) return res.status(409).json({ ok: false, error: "Invoice already exists for this booking" });
+
+  // Resolve service price from services table (TEXT → number)
+  const svcRow = db.prepare(`SELECT price FROM ${tenantId}_services WHERE name = ?`).get(booking.service);
+  const servicePrice = parseFloat(String(svcRow?.price || "0").replace(/[^0-9.]/g, "")) || 0;
+
+  // Resolve deals (must be active + valid off %)
+  let dealsOffPct = 0;
+  if (deal_ids.length > 0) {
+    const placeholders = deal_ids.map(() => "?").join(",");
+    const rows = db.prepare(`SELECT id, off FROM ${tenantId}_deals WHERE id IN (${placeholders}) AND active = 1`).all(...deal_ids);
+    dealsOffPct = Math.min(100, rows.reduce((s, d) => s + (Number(d.off) || 0), 0));
+  }
+  const discountAmount = servicePrice * (dealsOffPct / 100);
+  const total = (servicePrice - discountAmount) + extras + tipsNum;
+
+  try {
+    const result = db.transaction(() => {
+      const ins = db.prepare(`
+        INSERT INTO ${tenantId}_invoices
+          (booking_id, customer_name, phone, service, branch, staff_id, staff_name,
+           service_price, extra_services_price, tips, deal_ids_json, deals_off_pct,
+           discount_amount, total, payment_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        booking_id, booking.customer_name, booking.phone, booking.service, booking.branch,
+        booking.staff_id || null, booking.staff_name || null,
+        servicePrice, extras, tipsNum, JSON.stringify(deal_ids), dealsOffPct,
+        discountAmount, total, payment_type
+      );
+      db.prepare(`UPDATE ${tenantId}_bookings SET status='completed', updated_at=datetime('now') WHERE id=?`).run(booking_id);
+      db.prepare(`UPDATE ${tenantId}_staff_bookings SET status='completed', updated_at=datetime('now') WHERE bookingId=?`).run(booking_id);
+      db.prepare(`
+        INSERT INTO ${tenantId}_booking_audit (booking_id, old_status, new_status, changed_by, reason)
+        VALUES (?, 'arrived', 'completed', 'admin', 'Invoice generated')
+      `).run(booking_id);
+      db.prepare(`
+        INSERT INTO ${tenantId}_customer_metrics (phone, total_bookings, completed, total_spent) VALUES (?, 1, 1, ?)
+        ON CONFLICT(phone) DO UPDATE SET completed = completed + 1, total_spent = total_spent + ?, last_visit = ?, updated_at = datetime('now')
+      `).run(booking.phone, Math.round(total), Math.round(total), booking.date);
+      return ins.lastInsertRowid;
+    })();
+    const row = db.prepare(`SELECT * FROM ${tenantId}_invoices WHERE id = ?`).get(result);
+    const updatedBooking = db.prepare(`SELECT * FROM ${tenantId}_bookings WHERE id = ?`).get(booking_id);
+    if (updatedBooking) patchCache(tenantId, "bookings", "upsert", updatedBooking).catch((e) => logger.error("[invoices] cache booking:", e.message));
+    res.json(row);
+  } catch (err) {
+    logger.error("[invoices] POST failed:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// GET /salon-admin/api/invoices?from=&to=&branch=
+app.get("/salon-admin/api/invoices", requireTenantAuth, (req, res) => {
+  const tenantId = req.tenantId;
+  const db = getDb();
+  const { from, to, branch } = req.query;
+  let sql = `SELECT i.*, b.date AS booking_date, b.time AS booking_time
+             FROM ${tenantId}_invoices i
+             LEFT JOIN ${tenantId}_bookings b ON i.booking_id = b.id
+             WHERE 1=1`;
+  const args = [];
+  if (from) { sql += ` AND b.date >= ?`; args.push(from); }
+  if (to) { sql += ` AND b.date <= ?`; args.push(to); }
+  if (branch && branch !== "all") { sql += ` AND i.branch = ?`; args.push(branch); }
+  sql += ` ORDER BY i.created_at DESC`;
+  try {
+    const rows = db.prepare(sql).all(...args);
+    res.json(rows);
+  } catch (err) {
+    logger.error("[invoices] GET failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.patch("/salon-admin/api/bookings/:id/no-show", requireTenantAuth, async (req, res) => {
@@ -2429,8 +2545,10 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
 
   // Build WHERE clause
   const statusPlaceholders = statuses.map(() => "?").join(",");
-  let sql = `SELECT b.*, s.price AS service_price FROM ${tenantId}_bookings b
+  let sql = `SELECT b.*, s.price AS service_price, i.total AS invoice_total
+             FROM ${tenantId}_bookings b
              LEFT JOIN ${tenantId}_services s ON b.service = s.name
+             LEFT JOIN ${tenantId}_invoices i ON i.booking_id = b.id
              WHERE b.status IN (${statusPlaceholders})`;
   const args = [...statuses];
 
@@ -2440,11 +2558,14 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
 
   const bookings = db.prepare(sql).all(...args);
 
+  // Prefer invoice_total when present; fallback to service_price for pre-invoice completed bookings
+  const priceOf = (b) => {
+    if (b.invoice_total != null) return Number(b.invoice_total) || 0;
+    return parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
+  };
+
   // ── Aggregations (all derived from the same query result) ─────────────────
-  const totalRevenue = bookings.reduce((sum, b) => {
-    const price = parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
-    return sum + price;
-  }, 0);
+  const totalRevenue = bookings.reduce((sum, b) => sum + priceOf(b), 0);
 
   const serviceMap = {};
   const dealMap = {};
@@ -2454,7 +2575,7 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
     const svc = b.service || "Unknown";
     serviceMap[svc] = (serviceMap[svc] || 0) + 1;
 
-    const price = parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
+    const price = priceOf(b);
     revenueByService[svc] = (revenueByService[svc] || 0) + price;
 
     if (b.deal_name) dealMap[b.deal_name] = (dealMap[b.deal_name] || 0) + 1;
@@ -2481,8 +2602,7 @@ app.get("/salon-admin/api/analytics", requireTenantAuth, (req, res) => {
   for (const b of bookings) {
     const key = b.branch || "Unknown";
     bookingsByBranch[key] = (bookingsByBranch[key] || 0) + 1;
-    const price = parseFloat(String(b.service_price || "0").replace(/[^0-9.]/g, "")) || 0;
-    revenueByBranch[key] = (revenueByBranch[key] || 0) + price;
+    revenueByBranch[key] = (revenueByBranch[key] || 0) + priceOf(b);
   }
 
   // Status breakdown — always all statuses, same date/branch filter (ignores status param)
