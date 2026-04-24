@@ -68,6 +68,7 @@ function createTenantTables(tenantId) {
       title       TEXT    NOT NULL,
       description TEXT    NOT NULL,
       active      BOOLEAN NOT NULL DEFAULT 1,
+      off         INTEGER NOT NULL DEFAULT 0,
       created_at  TEXT    DEFAULT (datetime('now')),
       updated_at  TEXT    DEFAULT (datetime('now'))
     );
@@ -463,6 +464,10 @@ function ensureTenantTables(tenantId) {
     // Migration: ensure frozen column exists on services table (Phase 2 PLN-02..05)
     try {
       dbInstance.exec(`ALTER TABLE ${tenantId}_services ADD COLUMN frozen INTEGER NOT NULL DEFAULT 0`);
+    } catch (_) { /* column already exists */ }
+    // Migration: add off (discount %) column to deals table
+    try {
+      dbInstance.exec(`ALTER TABLE ${tenantId}_deals ADD COLUMN off INTEGER NOT NULL DEFAULT 0`);
     } catch (_) { /* column already exists */ }
   } catch (error) {
     console.error(`Error ensuring tenant tables for ${tenantId}:`, error);

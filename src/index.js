@@ -1358,18 +1358,20 @@ app.get("/salon-admin/api/deals", requireTenantAuth, (req, res) => {
 // CREATE single deal
 app.post("/salon-admin/api/deals", requireTenantAuth, (req, res) => {
   const tenantId = req.tenantId;
-  const { title, description, active } = req.body;
+  const { title, description, active, off } = req.body;
   const db = getDb();
 
   if (!title?.trim()) {
     return res.status(400).json({ error: "Title is required" });
   }
 
+  const offVal = Number.isInteger(Number(off)) ? Math.min(100, Math.max(0, Number(off))) : 0;
+
   try {
     const r = db.prepare(`
-      INSERT INTO ${tenantId}_deals (title, description, active, updated_at)
-      VALUES (?, ?, ?, datetime('now'))
-    `).run(title.trim(), description || null, active ? 1 : 0);
+      INSERT INTO ${tenantId}_deals (title, description, active, off, updated_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).run(title.trim(), description || null, active ? 1 : 0, offVal);
 
     const newDeal = db.prepare(`SELECT * FROM ${tenantId}_deals WHERE id = ?`).get(r.lastInsertRowid);
 
@@ -1390,12 +1392,14 @@ app.post("/salon-admin/api/deals", requireTenantAuth, (req, res) => {
 app.put("/salon-admin/api/deals/:id", requireTenantAuth, (req, res) => {
   const tenantId = req.tenantId;
   const dealId = req.params.id;
-  const { title, description, active } = req.body;
+  const { title, description, active, off } = req.body;
   const db = getDb();
 
   if (!title?.trim()) {
     return res.status(400).json({ error: "Title is required" });
   }
+
+  const offVal = Number.isInteger(Number(off)) ? Math.min(100, Math.max(0, Number(off))) : 0;
 
   const existing = db.prepare(`SELECT * FROM ${tenantId}_deals WHERE id = ?`).get(dealId);
   if (!existing) {
@@ -1404,10 +1408,10 @@ app.put("/salon-admin/api/deals/:id", requireTenantAuth, (req, res) => {
 
   try {
     db.prepare(`
-      UPDATE ${tenantId}_deals 
-      SET title = ?, description = ?, active = ?, updated_at = datetime('now')
+      UPDATE ${tenantId}_deals
+      SET title = ?, description = ?, active = ?, off = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(title.trim(), description || null, active ? 1 : 0, dealId);
+    `).run(title.trim(), description || null, active ? 1 : 0, offVal, dealId);
 
     const updated = db.prepare(`SELECT * FROM ${tenantId}_deals WHERE id = ?`).get(dealId);
 

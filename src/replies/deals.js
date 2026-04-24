@@ -4,9 +4,9 @@ function getDealsReply(tenantId) {
   try {
     const db = getDb();
     const deals = db.prepare(`
-      SELECT title, description 
-      FROM ${tenantId}_deals 
-      WHERE active = 1 
+      SELECT title, description, off
+      FROM ${tenantId}_deals
+      WHERE active = 1
       ORDER BY id
     `).all();
 
@@ -16,9 +16,10 @@ function getDealsReply(tenantId) {
 
     let reply = '🎁 *Current Deals & Offers*\n\n';
     for (const deal of deals) {
-      reply += `✨ *${deal.title}*\n${deal.description}\n\n`;
+      reply += `✨ *${deal.title}*\n`;
+      if (deal.off > 0) reply += `🏷️ *${deal.off}% OFF*\n`;
+      reply += `${deal.description}\n\n`;
     }
-    reply += 'To book, just type *book*!';
     return reply;
   } catch (err) {
     console.error('[deals] DB error:', err.message);
